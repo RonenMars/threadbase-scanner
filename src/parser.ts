@@ -193,7 +193,7 @@ export async function parseConversation(
 
       const content = extractTextContent(msg?.content);
 
-      if (content || isToolResultOnly) {
+      if (content || isToolResultOnly || toolUseBlocks.length > 0) {
         const metadata: MessageMetadata = {};
 
         if (msg?.model) metadata.model = msg.model as string;
