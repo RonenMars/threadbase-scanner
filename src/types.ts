@@ -34,6 +34,11 @@ export interface ContentTier {
 
 // ─── ConversationMeta (full superset) ───────────────────────────────
 
+export interface MessageSnapshot {
+  text: string;
+  timestamp: string;
+}
+
 export interface ConversationMeta {
   id: string;
   filePath: string;
@@ -54,6 +59,8 @@ export interface ConversationMeta {
   isTeammate: boolean;
   teamName: string | null;
   toolNames: string[];
+  firstMessage: MessageSnapshot | null;
+  lastMessage: MessageSnapshot | null;
 }
 
 // ─── View Variants ──────────────────────────────────────────────────

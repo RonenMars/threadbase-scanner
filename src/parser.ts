@@ -9,6 +9,7 @@ import type {
   ConversationMeta,
   MessageMetadata,
   MessageSender,
+  MessageSnapshot,
   TeamInfo,
   ToolUseBlock,
 } from "./types";
@@ -28,6 +29,8 @@ export async function parseMeta(
   let lastMessageSender: MessageSender = "user";
   let isTeammate = false;
   let firstUserSeen = false;
+  let firstMessage: MessageSnapshot | null = null;
+  let lastMessage: MessageSnapshot | null = null;
   const toolNameSet = new Set<string>();
   const previewParts: string[] = [];
   const snippetParts: string[] = [];
@@ -89,6 +92,12 @@ export async function parseMeta(
         lastMessageSender = type as MessageSender;
 
         if (content) {
+          const ts = (entry.timestamp as string) || "";
+          if (!firstMessage) {
+            firstMessage = { text: content.slice(0, 200), timestamp: ts };
+          }
+          lastMessage = { text: content.slice(0, 200), timestamp: ts };
+
           if (previewLength < tier.previewMax) {
             previewParts.push(content);
             previewLength += content.length;
@@ -138,6 +147,8 @@ export async function parseMeta(
     isTeammate,
     teamName: teamName || null,
     toolNames: Array.from(toolNameSet),
+    firstMessage,
+    lastMessage,
   };
 }
 
