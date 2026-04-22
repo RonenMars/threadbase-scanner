@@ -30,7 +30,9 @@
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "capture-live": "bash scripts/capture-live.sh",
+    "update-baseline": "bash scripts/update-baseline.sh"
   },
   "dependencies": {
     "commander": "^12.0.0",
