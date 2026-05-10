@@ -194,6 +194,7 @@ export async function parseConversation(
   const pendingToolUses = new Map<string, ToolUseBlock>();
   const teamInfoMap = new Map<string, TeamInfo>();
   const turnDurations: TurnDuration[] = [];
+  let lastPrompt = "";
 
   const fileStream = createReadStream(filePath);
   const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
@@ -219,6 +220,11 @@ export async function parseConversation(
       }
 
       const type = entry.type as string;
+
+      if (type === "last-prompt") {
+        if (entry.lastPrompt && !lastPrompt) lastPrompt = entry.lastPrompt as string;
+        continue;
+      }
 
       if (type === "system") {
         if (entry.subtype === "turn_duration" && typeof entry.durationMs === "number") {
@@ -356,6 +362,7 @@ export async function parseConversation(
     messageCount: messages.length,
     account,
     turnDurations: turnDurations.length > 0 ? turnDurations : undefined,
+    lastPrompt: lastPrompt || undefined,
   };
 }
 

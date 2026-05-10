@@ -213,4 +213,5 @@ export interface Conversation {
   messageCount: number;
   account: string;
   turnDurations?: TurnDuration[];
+  lastPrompt?: string;
 }
