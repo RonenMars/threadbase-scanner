@@ -61,6 +61,7 @@ export interface ConversationMeta {
   toolNames: string[];
   firstMessage: MessageSnapshot | null;
   lastMessage: MessageSnapshot | null;
+  lastPrompt?: string;
 }
 
 // ─── View Variants ──────────────────────────────────────────────────
@@ -118,6 +119,23 @@ export interface GetConversationOptions {
 
 // ─── Full Conversation ──────────────────────────────────────────────
 
+export interface TurnDuration {
+  durationMs: number;
+  messageCount: number;
+  uuid?: string;
+}
+
+export interface DeferredToolsDeltaAttachment {
+  type: "deferred_tools_delta";
+  addedNames: string[];
+  addedLines: unknown[];
+  removedNames: string[];
+}
+
+export type AttachmentSidecar =
+  | DeferredToolsDeltaAttachment
+  | { type: string; [key: string]: unknown };
+
 export interface ToolUseBlock {
   id: string;
   name: string;
@@ -172,6 +190,14 @@ export interface ConversationMessage {
   isToolResult?: boolean;
   isThinking?: boolean;
   thinkingContent?: string;
+  thinkingSignature?: string;
+  parentUuid?: string | null;
+  requestId?: string;
+  promptId?: string;
+  isSidechain?: boolean;
+  permissionMode?: string;
+  hasImages?: boolean;
+  attachment?: AttachmentSidecar;
 }
 
 export interface Conversation {
@@ -186,4 +212,5 @@ export interface Conversation {
   timestamp: string;
   messageCount: number;
   account: string;
+  turnDurations?: TurnDuration[];
 }

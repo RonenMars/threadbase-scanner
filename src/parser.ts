@@ -4,6 +4,7 @@ import { createInterface } from "readline";
 import { getLogger } from "./logger";
 import { cleanSystemTags } from "./tags";
 import type {
+  AttachmentSidecar,
   ContentTier,
   Conversation,
   ConversationMessage,
@@ -12,7 +13,9 @@ import type {
   MessageSender,
   MessageSnapshot,
   TeamInfo,
+  ToolResultBlock,
   ToolUseBlock,
+  TurnDuration,
 } from "./types";
 
 export async function parseMeta(
@@ -35,6 +38,7 @@ export async function parseMeta(
   let firstUserSeen = false;
   let firstMessage: MessageSnapshot | null = null;
   let lastMessage: MessageSnapshot | null = null;
+  let lastPrompt = "";
   const toolNameSet = new Set<string>();
   const previewParts: string[] = [];
   const snippetParts: string[] = [];
@@ -66,6 +70,14 @@ export async function parseMeta(
       }
 
       const type = entry.type as string;
+
+      if (type === "last-prompt") {
+        if (entry.lastPrompt && !lastPrompt) lastPrompt = entry.lastPrompt as string;
+        continue;
+      }
+
+      // file-history-snapshot entries are intentionally excluded:
+      // they contain file-edit undo state, not conversation content.
       if (type !== "user" && type !== "assistant") continue;
       if (entry.isMeta) continue;
 
@@ -162,6 +174,7 @@ export async function parseMeta(
     toolNames: Array.from(toolNameSet),
     firstMessage,
     lastMessage,
+    lastPrompt: lastPrompt || undefined,
   };
 }
 
@@ -180,6 +193,7 @@ export async function parseConversation(
   const textParts: string[] = [];
   const pendingToolUses = new Map<string, ToolUseBlock>();
   const teamInfoMap = new Map<string, TeamInfo>();
+  const turnDurations: TurnDuration[] = [];
 
   const fileStream = createReadStream(filePath);
   const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
@@ -205,6 +219,21 @@ export async function parseConversation(
       }
 
       const type = entry.type as string;
+
+      if (type === "system") {
+        if (entry.subtype === "turn_duration" && typeof entry.durationMs === "number") {
+          turnDurations.push({
+            durationMs: entry.durationMs as number,
+            messageCount: (entry.messageCount as number) || 0,
+            uuid: entry.uuid as string | undefined,
+          });
+        }
+        // file-history-snapshot entries are intentionally excluded:
+        // they contain file-edit undo state, not conversation content.
+        // stop_hook_summary and bridge_status are internal housekeeping only.
+        continue;
+      }
+
       if (type !== "user" && type !== "assistant") continue;
       if (entry.isMeta) continue;
 
@@ -221,7 +250,10 @@ export async function parseConversation(
 
       const content = extractTextContent(msg?.content);
 
-      if (content || isToolResultOnly || toolUseBlocks.length > 0) {
+      const thinking = type === "assistant" ? extractThinking(msg?.content) : null;
+      const hasThinking = !!(thinking?.content || thinking?.signature);
+
+      if (content || isToolResultOnly || toolUseBlocks.length > 0 || hasThinking) {
         const metadata: MessageMetadata = {};
 
         if (msg?.model) metadata.model = msg.model as string;
@@ -243,6 +275,11 @@ export async function parseConversation(
         if (toolUseNames.length > 0) metadata.toolUses = toolUseNames;
         if (toolUseBlocks.length > 0) metadata.toolUseBlocks = toolUseBlocks;
 
+        if (isToolResultOnly) {
+          const toolResultBlocks = extractToolResultBlocks(msg?.content, pendingToolUses);
+          if (toolResultBlocks.length > 0) metadata.toolResults = toolResultBlocks;
+        }
+
         if (entry.teamName) {
           metadata.teamName = entry.teamName as string;
           if (!teamInfoMap.has(metadata.teamName) && content) {
@@ -251,10 +288,8 @@ export async function parseConversation(
           }
         }
 
-        let thinkingContent: string | undefined;
-        if (type === "assistant") {
-          thinkingContent = extractThinkingContent(msg?.content) || undefined;
-        }
+        const thinkingContent = thinking?.content || undefined;
+        const thinkingSignature = thinking?.signature || undefined;
 
         const hasMetadata = Object.keys(metadata).length > 0;
 
@@ -265,8 +300,19 @@ export async function parseConversation(
           uuid: (entry.uuid as string) || undefined,
           metadata: hasMetadata ? metadata : undefined,
           isToolResult: isToolResultOnly || undefined,
-          isThinking: thinkingContent ? true : undefined,
+          isThinking: thinkingContent || thinkingSignature ? true : undefined,
           thinkingContent,
+          thinkingSignature,
+          parentUuid:
+            entry.parentUuid !== undefined ? (entry.parentUuid as string | null) : undefined,
+          requestId: type === "assistant" ? (entry.requestId as string | undefined) : undefined,
+          promptId: type === "user" ? (entry.promptId as string | undefined) : undefined,
+          isSidechain: typeof entry.isSidechain === "boolean" ? entry.isSidechain : undefined,
+          permissionMode:
+            type === "user" ? (entry.permissionMode as string | undefined) : undefined,
+          hasImages: hasImageBlocks(msg?.content) || undefined,
+          attachment:
+            entry.attachment !== undefined ? (entry.attachment as AttachmentSidecar) : undefined,
         });
         if (content) textParts.push(content);
       }
@@ -309,6 +355,7 @@ export async function parseConversation(
     timestamp: latestTimestamp || new Date().toISOString(),
     messageCount: messages.length,
     account,
+    turnDurations: turnDurations.length > 0 ? turnDurations : undefined,
   };
 }
 
@@ -350,6 +397,39 @@ function extractToolUseBlocks(content: unknown): ToolUseBlock[] {
     }));
 }
 
+const TOOL_NAME_TO_TYPE: Record<string, ToolResultBlock["type"]> = {
+  Edit: "edit",
+  Write: "write",
+  Read: "read",
+  Bash: "bash",
+  Grep: "grep",
+  Glob: "glob",
+  Agent: "taskAgent",
+  TaskCreate: "taskCreate",
+  TaskUpdate: "taskUpdate",
+};
+
+function extractToolResultBlocks(
+  content: unknown,
+  pendingToolUses: Map<string, ToolUseBlock>,
+): ToolResultBlock[] {
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((item) => item?.type === "tool_result" && item?.tool_use_id)
+    .map((item) => {
+      const toolName = pendingToolUses.get(item.tool_use_id as string)?.name ?? "";
+      return {
+        toolUseId: item.tool_use_id as string,
+        type: TOOL_NAME_TO_TYPE[toolName] ?? "generic",
+        content:
+          typeof item.content === "string"
+            ? { text: item.content as string }
+            : ((item.content as Record<string, unknown>) ?? {}),
+        isError: typeof item.is_error === "boolean" ? item.is_error : undefined,
+      };
+    });
+}
+
 function collectToolNames(content: unknown, toolSet: Set<string>): void {
   if (!Array.isArray(content)) return;
   for (const item of content) {
@@ -378,12 +458,28 @@ function isTeammateContent(content: unknown): boolean {
   return raw.includes("<teammate-message");
 }
 
-function extractThinkingContent(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((item) => item?.type === "thinking" && item?.thinking)
-    .map((item) => item.thinking as string)
-    .join("\n\n");
+function extractThinking(content: unknown): { content: string; signature: string } {
+  if (!Array.isArray(content)) return { content: "", signature: "" };
+  const blocks = content.filter((item) => item?.type === "thinking");
+  return {
+    content: blocks
+      .map((b) => b.thinking as string)
+      .filter(Boolean)
+      .join("\n\n"),
+    signature: blocks
+      .map((b) => b.signature as string)
+      .filter(Boolean)
+      .join(""),
+  };
+}
+
+function hasImageBlocks(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some(
+    (item) =>
+      item?.type === "image" &&
+      (item?.source?.type === "base64" || item?.file?.base64 !== undefined),
+  );
 }
 
 function parseTeammateMessageTag(content: string): TeamInfo | null {
