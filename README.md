@@ -107,6 +107,61 @@ await scan({
 })
 ```
 
+### Shared default scanner
+
+The convenience functions `scan`, `search`, and `getConversation` share a lazy module-level `ConversationScanner` so the FlexSearch index and conversation LRU survive across calls. A first `scan()` warms state; a subsequent `search()` reuses the already-built index instead of re-walking the filesystem.
+
+```typescript
+import { scan, search, getConversation, resetDefaultScanner } from '@threadbase/scanner'
+
+await scan({ profiles })          // warms the shared scanner
+await search('auth', { profiles }) // hits the in-memory index — no re-scan
+await getConversation(id)         // LRU hit on subsequent calls for the same id
+
+// Drop shared state (e.g. between tests, or to force a fresh scan)
+resetDefaultScanner()
+```
+
+To run isolated state (parallel scans with different options, multi-tenant hosts, etc.) pass an explicit scanner as the optional third parameter:
+
+```typescript
+import { ConversationScanner, scan, search } from '@threadbase/scanner'
+
+const work = new ConversationScanner()
+const personal = new ConversationScanner()
+
+await scan({ profiles: workProfiles }, work)
+await scan({ profiles: personalProfiles }, personal)
+
+const results = await search('query', { limit: 20 }, work)
+```
+
+The shared scanner does **not** auto-refresh: it reflects the filesystem at the time of the first scan. Call `resetDefaultScanner()` (or `scan()` again) when you need to pick up newly-created `.jsonl` files.
+
+### Logging
+
+The library uses [pino](https://getpino.io) internally and ships with a default **silent** logger, so embedding it produces no console output unless you opt in.
+
+```typescript
+import pino from 'pino'
+import { setLogger, createLogger } from '@threadbase/scanner'
+
+// Use your own pino instance
+setLogger(pino({ level: 'info' }))
+
+// Or build one from options
+setLogger(createLogger({ level: 'debug' }))
+```
+
+The CLI installs a `pino-pretty` transport on stderr at level `info` by default. Override with the `LOG_LEVEL` env var:
+
+```bash
+LOG_LEVEL=debug threadbase-scanner scan
+LOG_LEVEL=silent threadbase-scanner list --json
+```
+
+Log events the scanner emits include `scan: start` / `scan: complete` (with timings + counts), `search: start` / `search: complete`, batched discovery summaries, parse-failure warnings, and `getConversation` cache-hit traces. Previously-swallowed errors (broken JSONL, inaccessible files, missing config dirs) now surface as `warn`-level events with structured context — useful for diagnosing why a particular conversation didn't show up.
+
 ### Profiles
 
 ```typescript
@@ -219,6 +274,7 @@ src/
   profiles.ts     Profile management
   tags.ts         System tag cleaning
   tiers.ts        Content tier definitions
+  logger.ts       Pino-based logger seam (silent by default)
 cli/
   index.ts        CLI entry point (commander)
   commands/       list, search, show, scan, profiles
