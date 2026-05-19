@@ -76,8 +76,8 @@ export function parseSinceCutoff(value: string): Date {
   // Try ISO date
   const isoMatch = s.match(/^\d{4}-\d{2}-\d{2}$/);
   if (isoMatch) {
-    const d = new Date(s + "T00:00:00Z");
-    if (!isNaN(d.getTime())) return d;
+    const d = new Date(`${s}T00:00:00Z`);
+    if (!Number.isNaN(d.getTime())) return d;
   }
 
   // Try duration: digits + unit

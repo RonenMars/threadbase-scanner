@@ -6,19 +6,6 @@ const FlexSearch = (FlexSearchModule as any).default ?? FlexSearchModule;
 import { getLogger } from "./logger";
 import type { ConversationMeta, SearchMatch, SearchResult } from "./types";
 
-interface IndexedDocument {
-  id: string;
-  content: string;
-  projectName: string;
-  projectPath: string;
-  sessionId: string;
-  sessionName: string;
-  account: string;
-  model: string;
-  gitBranch: string;
-  toolNames: string;
-}
-
 export class SearchIndexer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private index: any;
@@ -140,8 +127,8 @@ export class SearchIndexer {
         const start = Math.max(0, idx - 80);
         const end = Math.min(value.length, idx + query.length + 120);
         let snippet = value.slice(start, end);
-        if (start > 0) snippet = "..." + snippet;
-        if (end < value.length) snippet = snippet + "...";
+        if (start > 0) snippet = `...${snippet}`;
+        if (end < value.length) snippet = `${snippet}...`;
         matches.push({ field, snippet });
       }
     }

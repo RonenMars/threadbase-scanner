@@ -39,17 +39,17 @@ describe("ConversationScanner", () => {
     mkdirSync(join(projectsDir, "my-project"), { recursive: true });
     writeFileSync(
       join(projectsDir, "my-project", "session1.jsonl"),
-      [
+      `${[
         VALID_LINE("u1", "2026-01-15T10:00:00.000Z", "Hello"),
         ASSISTANT_LINE("u2", "2026-01-15T10:00:05.000Z", "Hi there"),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
     writeFileSync(
       join(projectsDir, "my-project", "session2.jsonl"),
-      [
+      `${[
         VALID_LINE("u3", "2026-02-01T08:00:00.000Z", "Fix the bug"),
         ASSISTANT_LINE("u4", "2026-02-01T08:00:10.000Z", "Done"),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
     profile = { id: "test", label: "Test", configDir: tempDir, enabled: true };
   });
@@ -118,7 +118,7 @@ describe("ConversationScanner", () => {
     const conv = await scanner.getConversation(firstId);
 
     expect(conv).not.toBeNull();
-    expect(conv!.messages.length).toBeGreaterThan(0);
+    expect(conv?.messages.length).toBeGreaterThan(0);
   });
 
   it("searches indexed conversations", async () => {

@@ -134,7 +134,7 @@ export async function parseMeta(
   let parentSessionId: string | null = null;
   if (isSubagent) {
     const uuidDir = dirname(dirname(filePath));
-    parentSessionId = join(dirname(uuidDir), basename(uuidDir) + ".jsonl");
+    parentSessionId = join(dirname(uuidDir), `${basename(uuidDir)}.jsonl`);
   }
 
   const projectPath = cwd;
