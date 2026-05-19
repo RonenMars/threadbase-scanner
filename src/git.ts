@@ -1,11 +1,13 @@
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
+import { getLogger } from "./logger";
 
 const REF_PREFIX = "ref: refs/heads/";
 const MAX_DEPTH = 6;
 
 export function readGitBranch(projectPath: string): string | null {
   if (!projectPath) return null;
+  const log = getLogger();
 
   let dir = projectPath;
   let depth = 0;
@@ -15,10 +17,13 @@ export function readGitBranch(projectPath: string): string | null {
     try {
       const content = readFileSync(headPath, "utf-8").trim();
       if (content.startsWith(REF_PREFIX)) {
-        return content.slice(REF_PREFIX.length);
+        const branch = content.slice(REF_PREFIX.length);
+        log.trace({ projectPath, dir, branch }, "git: branch resolved");
+        return branch;
       }
       // Detached HEAD: raw commit SHA
       if (content.length >= 7) {
+        log.trace({ projectPath, dir }, "git: detached HEAD");
         return "(detached)";
       }
       return null;
@@ -32,5 +37,6 @@ export function readGitBranch(projectPath: string): string | null {
     depth++;
   }
 
+  log.trace({ projectPath }, "git: no .git found within depth");
   return null;
 }

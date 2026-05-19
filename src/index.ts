@@ -1,12 +1,3 @@
-export { readGitBranch } from "./git";
-export { SearchIndexer } from "./indexer";
-export {
-  detectDefaultProfile,
-  getProjectsDir,
-  loadProfiles,
-  resolveConfigDir,
-  saveProfiles,
-} from "./profiles";
 export {
   applyAccountFilter,
   applyIncludeFilter,
@@ -15,6 +6,17 @@ export {
   applySinceFilter,
   applySort,
 } from "./filters";
+export { readGitBranch } from "./git";
+export { SearchIndexer } from "./indexer";
+export type { Logger, LoggerOptions } from "./logger";
+export { createLogger, getLogger, setLogger } from "./logger";
+export {
+  detectDefaultProfile,
+  getProjectsDir,
+  loadProfiles,
+  resolveConfigDir,
+  saveProfiles,
+} from "./profiles";
 export { ConversationScanner } from "./scanner";
 export { cleanSystemTags } from "./tags";
 export { DEFAULT_TIERS, resolveTier } from "./tiers";
@@ -32,20 +34,38 @@ import type {
   SearchResult,
 } from "./types";
 
-export async function scan(options?: ScanOptions): Promise<ScanResult> {
-  const scanner = new ConversationScanner();
-  return scanner.scan(options);
+let defaultScanner: ConversationScanner | undefined;
+
+function getDefaultScanner(): ConversationScanner {
+  if (!defaultScanner) {
+    defaultScanner = new ConversationScanner();
+  }
+  return defaultScanner;
 }
 
-export async function search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
-  const scanner = new ConversationScanner();
-  return scanner.search(query, options);
+export function resetDefaultScanner(): void {
+  defaultScanner = undefined;
+}
+
+export async function scan(
+  options?: ScanOptions,
+  scanner?: ConversationScanner,
+): Promise<ScanResult> {
+  return (scanner ?? getDefaultScanner()).scan(options);
+}
+
+export async function search(
+  query: string,
+  options?: SearchOptions,
+  scanner?: ConversationScanner,
+): Promise<SearchResult[]> {
+  return (scanner ?? getDefaultScanner()).search(query, options);
 }
 
 export async function getConversation(
   id: string,
   options?: GetConversationOptions,
+  scanner?: ConversationScanner,
 ): Promise<Conversation | null> {
-  const scanner = new ConversationScanner();
-  return scanner.getConversation(id, options);
+  return (scanner ?? getDefaultScanner()).getConversation(id, options);
 }

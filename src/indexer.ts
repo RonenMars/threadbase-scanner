@@ -3,6 +3,7 @@ import FlexSearchModule from "flexsearch";
 // FlexSearch has inconsistent default export across ESM/CJS
 const FlexSearch = (FlexSearchModule as any).default ?? FlexSearchModule;
 
+import { getLogger } from "./logger";
 import type { ConversationMeta, SearchMatch, SearchResult } from "./types";
 
 interface IndexedDocument {
@@ -71,6 +72,7 @@ export class SearchIndexer {
     for (const meta of metas) {
       this.addDocument(meta);
     }
+    getLogger().debug({ docCount: metas.length }, "indexer: built");
   }
 
   search(query: string, options?: { fields?: string[]; limit?: number }): SearchResult[] {
@@ -154,5 +156,6 @@ export class SearchIndexer {
   clear(): void {
     this.documents.clear();
     this.index = this.createIndex();
+    getLogger().trace("indexer: cleared");
   }
 }

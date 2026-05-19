@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
+import { getLogger } from "./logger";
 import type { Profile } from "./types";
 
 const PROFILES_FILE = "profiles.json";
@@ -24,11 +25,15 @@ export async function detectDefaultProfile(): Promise<Profile> {
 }
 
 export async function loadProfiles(configPath: string): Promise<Profile[]> {
+  const log = getLogger();
   try {
     const resolved = resolveConfigDir(configPath);
     const data = await readFile(join(resolved, PROFILES_FILE), "utf-8");
-    return JSON.parse(data) as Profile[];
-  } catch {
+    const profiles = JSON.parse(data) as Profile[];
+    log.debug({ configPath, count: profiles.length }, "profiles: loaded");
+    return profiles;
+  } catch (err) {
+    log.debug({ configPath, err }, "profiles: load failed, using default");
     const defaultProfile = await detectDefaultProfile();
     return [defaultProfile];
   }
@@ -38,4 +43,5 @@ export async function saveProfiles(profiles: Profile[], configPath: string): Pro
   const resolved = resolveConfigDir(configPath);
   await mkdir(resolved, { recursive: true });
   await writeFile(join(resolved, PROFILES_FILE), JSON.stringify(profiles, null, 2));
+  getLogger().debug({ configPath, count: profiles.length }, "profiles: saved");
 }

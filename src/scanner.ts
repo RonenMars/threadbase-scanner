@@ -11,6 +11,7 @@ import {
 } from "./filters";
 import { readGitBranch } from "./git";
 import { SearchIndexer } from "./indexer";
+import { getLogger } from "./logger";
 import { parseConversation, parseMeta } from "./parser";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { resolveTier } from "./tiers";
@@ -42,10 +43,23 @@ export class ConversationScanner {
   }
 
   async scan(options: ScanOptions = {}): Promise<ScanResult> {
+    const log = getLogger();
+    const startedAt = Date.now();
     const profiles = await this.resolveProfiles(options.profiles);
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
 
     const tier = resolveTier(options.tier ?? "standard", options.tiers);
+
+    log.info(
+      {
+        activeProfiles: activeProfiles.length,
+        tier: tier.name,
+        sort: options.sort ?? "recent",
+        include: options.include ?? "all",
+        view: options.view ?? "flat",
+      },
+      "scan: start",
+    );
 
     // Clear caches
     this.metadataCache.clear();
@@ -62,6 +76,7 @@ export class ConversationScanner {
     const files = await discoverJsonlFiles(configDirs);
     const totalFiles = files.length;
     let scanned = 0;
+    let parseFailures = 0;
 
     const allMetas: ConversationMeta[] = [];
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
@@ -74,7 +89,9 @@ export class ConversationScanner {
               meta.gitBranch = readGitBranch(meta.projectPath);
             }
             return meta;
-          } catch {
+          } catch (err) {
+            parseFailures++;
+            log.warn({ filePath, account, err }, "scan: parseMeta threw");
             return null;
           }
         }),
@@ -97,6 +114,7 @@ export class ConversationScanner {
       }
 
       scanned += batch.length;
+      log.debug({ scanned, totalFiles, batchKept: batchMetas.length }, "scan: batch complete");
       options.onProgress?.(scanned, totalFiles);
     }
 
@@ -120,6 +138,19 @@ export class ConversationScanner {
     const total = filtered.length;
     const conversations = this.transformView(filtered, options);
 
+    const elapsedMs = Date.now() - startedAt;
+    log.info(
+      {
+        totalFiles,
+        scanned,
+        kept: allMetas.length,
+        filteredTotal: total,
+        parseFailures,
+        elapsedMs,
+      },
+      "scan: complete",
+    );
+
     if (Array.isArray(conversations)) {
       const limit = options.limit ?? 50;
       const offset = options.offset ?? 0;
@@ -131,7 +162,11 @@ export class ConversationScanner {
   }
 
   async search(query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
+    const log = getLogger();
+    log.debug({ query, indexSize: this.indexer.getDocumentCount() }, "search: start");
+
     if (this.indexer.getDocumentCount() === 0) {
+      log.debug("search: index empty, triggering scan");
       await this.scan({ ...options, limit: undefined, offset: undefined });
     }
 
@@ -172,26 +207,37 @@ export class ConversationScanner {
 
     const limit = options.limit ?? 50;
     const offset = options.offset ?? 0;
-    return results.slice(offset, offset + limit);
+    const sliced = results.slice(offset, offset + limit);
+    log.debug({ query, matched: results.length, returned: sliced.length }, "search: complete");
+    return sliced;
   }
 
   async getConversation(
     id: string,
     _options?: GetConversationOptions,
   ): Promise<Conversation | null> {
+    const log = getLogger();
     const cached = this.conversationLRU.get(id);
-    if (cached) return cached;
+    if (cached) {
+      log.debug({ id }, "getConversation: cache hit");
+      return cached;
+    }
 
     const meta = this.metadataCache.get(id) ?? this.sessionIdIndex.get(id);
-    if (!meta) return null;
+    if (!meta) {
+      log.debug({ id }, "getConversation: not found in metadata");
+      return null;
+    }
 
+    log.debug({ id, filePath: meta.filePath }, "getConversation: cache miss, parsing");
     try {
       const conversation = await parseConversation(meta.filePath, meta.account);
       if (conversation) {
         this.conversationLRU.set(id, conversation);
       }
       return conversation;
-    } catch {
+    } catch (err) {
+      log.warn({ id, filePath: meta.filePath, err }, "getConversation: parse failed");
       return null;
     }
   }

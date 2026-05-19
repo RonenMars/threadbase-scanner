@@ -1,6 +1,7 @@
 import { createReadStream } from "fs";
 import { basename, dirname, join } from "path";
 import { createInterface } from "readline";
+import { getLogger } from "./logger";
 import { cleanSystemTags } from "./tags";
 import type {
   ContentTier,
@@ -19,7 +20,10 @@ export async function parseMeta(
   account: string,
   tier: ContentTier,
 ): Promise<ConversationMeta | null> {
+  const log = getLogger();
+  log.trace({ filePath, account, tier: tier.name }, "parseMeta: start");
   let sessionId = "";
+  let badJsonLines = 0;
   let sessionName = "";
   let latestTimestamp = "";
   let cwd = "";
@@ -48,6 +52,7 @@ export async function parseMeta(
       try {
         entry = JSON.parse(line);
       } catch {
+        badJsonLines++;
         continue;
       }
 
@@ -111,11 +116,19 @@ export async function parseMeta(
         }
       }
     }
-  } catch {
+  } catch (err) {
+    log.warn({ filePath, err }, "parseMeta: read failed");
     return null;
   }
 
-  if (messageCount === 0) return null;
+  if (badJsonLines > 0) {
+    log.warn({ filePath, badJsonLines }, "parseMeta: skipped malformed JSON lines");
+  }
+
+  if (messageCount === 0) {
+    log.trace({ filePath }, "parseMeta: no messages");
+    return null;
+  }
 
   const isSubagent = filePath.includes("/subagents/");
   let parentSessionId: string | null = null;
@@ -156,7 +169,10 @@ export async function parseConversation(
   filePath: string,
   account: string,
 ): Promise<Conversation | null> {
+  const log = getLogger();
+  log.trace({ filePath, account }, "parseConversation: start");
   const messages: ConversationMessage[] = [];
+  let badJsonLines = 0;
   let sessionId = "";
   let sessionName = "";
   let latestTimestamp = "";
@@ -176,6 +192,7 @@ export async function parseConversation(
       try {
         entry = JSON.parse(line);
       } catch {
+        badJsonLines++;
         continue;
       }
 
@@ -254,11 +271,21 @@ export async function parseConversation(
         if (content) textParts.push(content);
       }
     }
-  } catch {
+  } catch (err) {
+    log.warn({ filePath, err }, "parseConversation: read failed");
     return null;
   }
 
-  if (messages.length === 0) return null;
+  if (badJsonLines > 0) {
+    log.warn({ filePath, badJsonLines }, "parseConversation: skipped malformed JSON lines");
+  }
+
+  if (messages.length === 0) {
+    log.trace({ filePath }, "parseConversation: no messages");
+    return null;
+  }
+
+  log.debug({ filePath, messageCount: messages.length }, "parseConversation: complete");
 
   // Apply collected team info to matching messages
   if (teamInfoMap.size > 0) {
