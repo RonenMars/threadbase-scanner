@@ -194,3 +194,72 @@ After implementation, verify in this order:
    Expect: completes without needing access to private scanner repo. Confirms the open-source promise is honest.
 
 If all nine pass, the migration is complete. The protected scanner ships as bytecode to all users worldwide on Node 22-26; the streamer source is genuinely cloneable, buildable, and contributable on the public repo.
+
+---
+
+## What we learned (2026-05-23 attempt)
+
+This plan was executed once and **failed** during real-world distribution testing. We published `@ronenmars/threadbase-scanner@0.2.2` to public npm with a 5-Node-major matrix of `.jsc` files, then unpublished it within the 72h window after discovering it could not load on the target user platforms.
+
+Pinning these findings so the next attempt doesn't repeat the discovery loop.
+
+### Finding 1: bytenode `.jsc` is NOT cross-platform — period
+
+The bytenode README claims `.jsc` files are "CPU-agnostic." This is misleading. In practice:
+
+- A `.jsc` compiled on **Linux x86_64 (GitHub Actions `ubuntu-latest`)** crashes with `# Fatal error in , line 0 / # Check failed: index < size().` when loaded on **macOS ARM64 (Apple Silicon)** — even with **identical Node version `v24.15.0` on both sides**.
+- The crash happens deep in `v8::internal::DescriptorArray::Sort()` during heap deserialization (`Rehash`). It is **not** the source-hash check (bytenode's `generateScript` already neutralizes that via the `​`-padding trick); it's a different V8 invariant that depends on CPU feature flags.
+- Confirmed by the bytenode maintainer in [bytenode#244](https://github.com/bytenode/bytenode/issues/244): *"That way you described it [Windows-build → Linux-run], isn't possible and will never be possible unless v8 itself supports such a thing."*
+- The README itself walks this back with: *"V8 sanity checks include some checks related to CPU supported features, so this may cause errors in some rare cases."* The cases are not rare — they're every cross-OS, cross-CPU-arch boundary.
+
+**Implication for any future attempt**: a 5-Node matrix is not sufficient. Real coverage requires `{node-major} × {OS-arch}` = e.g. `[22,23,24,25,26] × [linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64]` = **25 build jobs and 25 `.jsc` directories** in the published tarball. Roughly 1.9 MB of bytecode per release. The loader must dispatch on `process.versions.node` + `process.platform` + `process.arch`. Workflow needs runner matrix with `runs-on: ${{ matrix.os }}`.
+
+### Finding 2: `--provenance` requires a public source repo
+
+`npm publish --provenance` rejects publishes from private GitHub repos:
+
+```
+422 Unprocessable Entity - Error verifying sigstore provenance bundle:
+Unsupported GitHub Actions source repository visibility: "private".
+Only public source repositories are supported when publishing with provenance.
+```
+
+The sigstore transparency log assumes anyone can audit the build by reading the public repo. Since the whole point of bytenode is to keep source private, **provenance is incompatible with our threat model**. Don't add `id-token: write` and `--provenance` in the publish workflow.
+
+### Finding 3: `prepublishOnly` blows away matrix-assembled `dist/`
+
+`npm publish` triggers `prepublishOnly`, which our package had set to `npm run build`. In the CI publish job — which had already downloaded all 5 per-Node artifacts into `dist/` — this rebuilt the whole thing for only the publish runner's Node version, deleting `node-22/`, `node-23/`, `node-25/`, `node-26/` and leaving only `node-24/`. The shipped tarball had `.jsc` for one Node major instead of five.
+
+**Fix**: drop `prepublishOnly` entirely. CI's workflow already enforces the build → assemble → publish ordering; the lifecycle script is redundant and actively harmful here. Removed in commit `192ddd6`.
+
+### Finding 4: tsup output is path-sensitive
+
+Even on identical Node versions and identical platforms, two tsup runs from different working-directory paths produce different bytecode bytes (verified by `cmp` on the `.jsc` files — first 16 bytes identical, byte 17 onwards differ). The tsup-bundled JS contains module IDs/paths that vary between machines. This *alone* wouldn't break loading (bytenode's source-hash trick handles it), but it's a useful signal that "byte-identical output across machines" isn't a property tsup gives you.
+
+### Finding 5: package-name and org availability
+
+- `@threadbase` org creation was denied by npm's anti-abuse system (likely due to the existing unscoped `threadbase` package by another publisher — see [`threadbase` on npm](https://www.npmjs.com/package/threadbase)).
+- `@ronenmars/threadbase-scanner` was used as the personal-scope fallback. Available, free to publish, no org needed.
+- Version `0.2.2` is now permanently tombstoned on npm (unpublished, cannot be re-used as a version number).
+
+### Finding 6: order-of-operations for unpublish
+
+`npm unpublish` requires 2FA. The auth URL displayed in the terminal is hidden from non-interactive sessions (e.g., from a tool harness) — the human running `npm` needs to copy the URL from their own terminal and complete auth in the browser. The npm web UI may show a `diagnostics id: …` error *after* the backend has already completed the unpublish — verify via `npm view <pkg>` or `curl https://registry.npmjs.org/<pkg>` rather than trusting the UI.
+
+### What's still useful from this attempt
+
+Even though we won't ship bytenode as-is, the work isn't all wasted:
+
+- **The loader pattern** (small `.cjs`/`.js` dispatchers that pick the right artifact at runtime) generalizes: any per-platform protection strategy will need the same dispatch shape, just keyed on different axes.
+- **The two-stage build separation** (tsup → post-processing) is the right shape for any "obfuscate / encode / wrap the JS bundle" pipeline. `scripts/build-bytenode.mjs` would just be renamed and its bytenode call swapped for an obfuscator call.
+- **The CI matrix + artifact-merge workflow** is correct for any per-axis matrix build; only the matrix dimensions change.
+- **`scripts/assemble-dist.mjs`** is the right place to validate per-artifact completeness before publish.
+- **The tarball-content validator** caught a real shipping bug (we had `.d.ts` in our forbidden list). The shape of the check (validate tarball contents pre-publish) is worth keeping in any future pipeline.
+
+### Open questions for the next attempt
+
+1. **Threat model precision**: how much friction is "enough"? Bytenode adds hours-of-effort friction; obfuscation adds minutes. If the answer is "anything that stops casual copy-paste," obfuscation is sufficient and the matrix complexity isn't worth it.
+2. **Are we OK with bigger tarballs?** A 25-platform matrix means ~1.9 MB of bytecode vs ~75 KB of obfuscated JS — a 25× size difference shipped to every user.
+3. **Should we ship two flavors?** User chose this direction (publish obfuscated + plain side-by-side) but we paused before implementing. Decide on packaging (one package with subpaths vs two packages vs dist-tag variants) before next attempt.
+4. **Does the private repo + public package model still make sense?** If we keep the source repo private and `npm publish` the artifact, we're already in a "bytecode optional" zone — the source isn't on GitHub for anyone to clone. Obfuscation may be marginal protection on top of "source repo is private."
+
