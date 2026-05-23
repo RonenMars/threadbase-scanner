@@ -1,6 +1,6 @@
 {
   "name": "@ronenmars/threadbase-scanner",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Unified Claude Code conversation history scanner",
   "type": "module",
   "main": "dist/index.cjs",

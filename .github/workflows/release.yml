@@ -91,14 +91,17 @@ jobs:
       - name: Inspect tarball contents (sanity)
         run: |
           npm pack --dry-run
-          # Hard-check: no .ts files leak, no extra .js outside loaders.
+          # Hard-check: only the public types (.d.ts / .d.cts) may carry a .ts
+          # extension; no source .ts/.tsx leaks, and no JS outside the three
+          # loader files.
           npm pack --json | node -e '
             const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
             const files = r[0].files.map(f => f.path);
+            const isPublicTypes = (f) => /\.d\.(c|m)?ts$/.test(f);
+            const ALLOWED_JS = new Set(["dist/index.cjs","dist/index.js","dist/cli.cjs"]);
             const bad = files.filter(f =>
-              /\.(ts|tsx)$/.test(f) ||
-              (/\.(js|cjs|mjs)$/.test(f) &&
-               !["dist/index.cjs","dist/index.js","dist/cli.cjs"].includes(f))
+              (/\.(ts|tsx)$/.test(f) && !isPublicTypes(f)) ||
+              (/\.(js|cjs|mjs)$/.test(f) && !ALLOWED_JS.has(f))
             );
             if (bad.length) {
               console.error("Tarball would ship forbidden files:", bad);
