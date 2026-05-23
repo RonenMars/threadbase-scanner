@@ -1,4 +1,4 @@
-# @threadbase/scanner
+# @ronenmars/threadbase-scanner
 
 Unified Claude Code conversation history scanner. Combines the best parts of four independent scanner implementations (VS Code, Electron, IntelliJ, CLI) into a single TypeScript package.
 
@@ -19,13 +19,33 @@ Unified Claude Code conversation history scanner. Combines the best parts of fou
 ## Installation
 
 ```bash
-npm install @threadbase/scanner
+npm install @ronenmars/threadbase-scanner
 ```
+
+### Supported Node versions
+
+`@ronenmars/threadbase-scanner` ships as V8 bytecode (`.jsc`) compiled for specific Node majors. The published npm tarball contains pre-compiled bytecode for each supported version under `dist/node-<major>/`; a small loader picks the right one at runtime based on `process.versions.node`.
+
+| Node major | Status |
+|-----------|--------|
+| 22        | LTS (active until April 2027) |
+| 23        | EOL (June 2025) — still supported by us |
+| 24        | LTS (current) |
+| 25        | Current (will become LTS Oct 2026) |
+| 26        | Current (releases April 2026) |
+
+Running on an unsupported Node major produces a clear error at module load:
+
+```
+Error: @ronenmars/threadbase-scanner does not support Node 20.x.y. Supported majors: 22, 23, 24, 25, 26.
+```
+
+Upgrade to a supported Node version (we recommend the latest LTS).
 
 ## Library Usage
 
 ```typescript
-import { scan, search, getConversation, ConversationScanner } from '@threadbase/scanner'
+import { scan, search, getConversation, ConversationScanner } from '@ronenmars/threadbase-scanner'
 
 // Quick scan with defaults
 const result = await scan()
@@ -62,7 +82,7 @@ for (const msg of conv.messages) {
 ### Using the class directly
 
 ```typescript
-import { ConversationScanner } from '@threadbase/scanner'
+import { ConversationScanner } from '@ronenmars/threadbase-scanner'
 
 const scanner = new ConversationScanner({ conversationCacheSize: 10 })
 
@@ -112,7 +132,7 @@ await scan({
 The convenience functions `scan`, `search`, and `getConversation` share a lazy module-level `ConversationScanner` so the FlexSearch index and conversation LRU survive across calls. A first `scan()` warms state; a subsequent `search()` reuses the already-built index instead of re-walking the filesystem.
 
 ```typescript
-import { scan, search, getConversation, resetDefaultScanner } from '@threadbase/scanner'
+import { scan, search, getConversation, resetDefaultScanner } from '@ronenmars/threadbase-scanner'
 
 await scan({ profiles })          // warms the shared scanner
 await search('auth', { profiles }) // hits the in-memory index — no re-scan
@@ -125,7 +145,7 @@ resetDefaultScanner()
 To run isolated state (parallel scans with different options, multi-tenant hosts, etc.) pass an explicit scanner as the optional third parameter:
 
 ```typescript
-import { ConversationScanner, scan, search } from '@threadbase/scanner'
+import { ConversationScanner, scan, search } from '@ronenmars/threadbase-scanner'
 
 const work = new ConversationScanner()
 const personal = new ConversationScanner()
@@ -144,7 +164,7 @@ The library uses [pino](https://getpino.io) internally and ships with a default 
 
 ```typescript
 import pino from 'pino'
-import { setLogger, createLogger } from '@threadbase/scanner'
+import { setLogger, createLogger } from '@ronenmars/threadbase-scanner'
 
 // Use your own pino instance
 setLogger(pino({ level: 'info' }))
@@ -165,7 +185,7 @@ Log events the scanner emits include `scan: start` / `scan: complete` (with timi
 ### Profiles
 
 ```typescript
-import { loadProfiles, saveProfiles } from '@threadbase/scanner'
+import { loadProfiles, saveProfiles } from '@ronenmars/threadbase-scanner'
 
 // Load from ~/.config/threadbase-scanner/profiles.json
 const profiles = await loadProfiles('~/.config/threadbase-scanner')
@@ -183,7 +203,7 @@ await scan({
 
 ```bash
 # Install globally
-npm install -g @threadbase/scanner
+npm install -g @ronenmars/threadbase-scanner
 
 # Scan all conversations
 threadbase-scanner scan

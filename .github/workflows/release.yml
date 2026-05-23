@@ -1,0 +1,113 @@
+name: Release
+
+# Two-stage build → publish flow:
+#   1. `compile` runs the build (tsup + bytenode) on a matrix of Node majors,
+#      each producing dist/node-<major>/{index,cli}.jsc. Each job uploads its
+#      per-Node .jsc files as an artifact.
+#   2. `publish` downloads every artifact, merges them into one dist/, validates
+#      via scripts/assemble-dist.mjs, then npm publish --access public.
+#
+# When bumping the supported Node majors, update BOTH the matrix below and the
+# EXPECTED_MAJORS constant in scripts/assemble-dist.mjs.
+#
+# Security note: all ${{ … }} expressions in this file reference either matrix
+# values (defined in this file, not external input) or secrets. There is no
+# interpolation of untrusted GitHub event payload data into run: commands.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # for npm provenance
+
+jobs:
+  compile:
+    name: Compile for Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 23, 24, 25, 26]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (tsup + bytenode)
+        run: npm run build
+
+      - name: Verify .jsc files exist for this Node major
+        env:
+          NODE_MAJOR: ${{ matrix.node }}
+        run: |
+          test -f "dist/node-${NODE_MAJOR}/index.jsc"
+          test -f "dist/node-${NODE_MAJOR}/cli.jsc"
+
+      - name: Upload per-Node artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jsc-node-${{ matrix.node }}
+          # Upload everything in dist/. The loader files and .d.ts are identical
+          # across jobs; downloads later use merge-multiple: true so last write
+          # wins, which is fine — they're byte-identical from CI's setup.
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all per-Node artifacts into dist/
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jsc-node-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Assemble and validate dist/
+        run: node scripts/assemble-dist.mjs
+
+      - name: Inspect tarball contents (sanity)
+        run: |
+          npm pack --dry-run
+          # Hard-check: no .ts files leak, no extra .js outside loaders.
+          npm pack --json | node -e '
+            const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const files = r[0].files.map(f => f.path);
+            const bad = files.filter(f =>
+              /\.(ts|tsx)$/.test(f) ||
+              (/\.(js|cjs|mjs)$/.test(f) &&
+               !["dist/index.cjs","dist/index.js","dist/cli.cjs"].includes(f))
+            );
+            if (bad.length) {
+              console.error("Tarball would ship forbidden files:", bad);
+              process.exit(1);
+            }
+            console.log("Tarball contents OK:", files.length, "files");
+          '
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

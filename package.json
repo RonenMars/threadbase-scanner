@@ -1,5 +1,5 @@
 {
-  "name": "@threadbase/scanner",
+  "name": "@ronenmars/threadbase-scanner",
   "version": "0.1.0",
   "description": "Unified Claude Code conversation history scanner",
   "type": "module",
@@ -7,23 +7,26 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "threadbase-scanner": "dist/cli.js"
+    "threadbase-scanner": "dist/cli.cjs"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/build-bytenode.mjs",
+    "build:tsup": "tsup",
+    "build:bytenode": "node scripts/build-bytenode.mjs",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -35,6 +38,7 @@
     "update-baseline": "bash scripts/update-baseline.sh"
   },
   "dependencies": {
+    "bytenode": "^1.5.7",
     "commander": "^12.0.0",
     "fast-glob": "^3.3.0",
     "flexsearch": "^0.7.43",
