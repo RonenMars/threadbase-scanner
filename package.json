@@ -1,6 +1,6 @@
 {
   "name": "@ronenmars/threadbase-scanner",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Unified Claude Code conversation history scanner",
   "type": "module",
   "main": "dist/index.cjs",
@@ -33,7 +33,6 @@
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
-    "prepublishOnly": "npm run build",
     "capture-live": "bash scripts/capture-live.sh",
     "update-baseline": "bash scripts/update-baseline.sh"
   },

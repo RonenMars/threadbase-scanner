@@ -22,7 +22,11 @@ on:
 
 permissions:
   contents: read
-  id-token: write # for npm provenance
+  # id-token: write would be needed for `npm publish --provenance`, but npm
+  # rejects provenance when the source GitHub repo is private. This package is
+  # published from a private repo by design (the whole point of bytenode is to
+  # protect scanner source). If the repo ever goes public, re-add id-token:
+  # write here and put --provenance back on the publish command below.
 
 jobs:
   compile:
@@ -111,6 +115,9 @@ jobs:
           '
 
       - name: Publish to npm
-        run: npm publish --access public --provenance
+        # --provenance omitted: this package is published from a private source
+        # repo, and npm rejects provenance for private repos (sigstore
+        # verification needs a public source for the transparency log).
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
