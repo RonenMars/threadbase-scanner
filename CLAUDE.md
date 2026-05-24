@@ -12,32 +12,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run lint` — type-check + Biome lint (`tsc --noEmit && npx biome check .`)
 - `npm run format` — auto-format all files (`npx biome format --write .`)
 - `npm run check` — lint + format with auto-fix (`npx biome check --write .`)
-- `npm run build` — two-stage build: tsup → bytenode (outputs `dist/<loaders>` + `dist/node-<major>/*.jsc`)
-- `npm run build:tsup` — just tsup, no bytenode (debugging)
-- `npm run build:bytenode` — just bytenode on existing `dist/` (debugging)
+- `npm run build` — produces `dist/` via tsup (ESM + CJS + types). Also runs automatically as `prepare` when this repo is installed as a git URL dependency.
 - Single test: `npx vitest run __tests__/parser.test.ts`
 
 ## Architecture
 
 Three layers: **core engine** (src/*.ts) → **API layer** (src/index.ts exports) → **CLI wrapper** (cli/).
 
-### Build pipeline — two stages
-
-1. **`tsup`** produces bundled JS in `dist/`: `index.cjs` (CJS), `index.js` (ESM), `cli.cjs` (CJS with shebang), `index.d.ts`, `index.d.cts`. The CLI is emitted as CJS (not ESM, as it was historically) so bytenode can compile it.
-
-2. **`scripts/build-bytenode.mjs`** compiles the CJS outputs to V8 bytecode under `dist/node-<major>/{index,cli}.jsc`, deletes the bundled JS source files, and installs small dispatching loaders (`src/loader/*`) in their place as `dist/index.cjs`, `dist/index.js`, `dist/cli.cjs`. Each loader inspects `process.versions.node` at runtime and `require`s the matching `.jsc`.
-
-The published npm tarball contains **only bytecode + loaders + types** — never the bundled scanner source. Local builds produce a `dist/` with one `node-<current>/` directory; CI's release matrix (`.github/workflows/release.yml`) produces all five (`node-22/` through `node-26/`) and merges them in the publish job via `scripts/assemble-dist.mjs`.
-
-### Supported Node versions
-
-The release matrix is `[22, 23, 24, 25, 26]`. Three places define this — keep them in sync when bumping:
-
-1. `.github/workflows/release.yml` — `compile` job's matrix
-2. `.github/workflows/ci.yml` — `test` job's matrix
-3. `scripts/assemble-dist.mjs` — `EXPECTED_MAJORS` constant
-
-Users on unsupported Node majors hit a hard error at module load — there is no plain-JS fallback. `engines.node` in `package.json` is `>=22` so `npm install` also warns up front.
+The library and CLI are built as separate tsup entries — `src/index.ts` produces `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types, while `cli/index.ts` produces `dist/cli.js` with a shebang.
 
 Key modules and their responsibilities:
 - `discovery.ts` — fast-glob `**/*.jsonl` with `/memory/` and `/tool-results/` exclusions
@@ -45,7 +27,14 @@ Key modules and their responsibilities:
 - `indexer.ts` — FlexSearch document index across all metadata fields
 - `filters.ts` — immutable sort/filter/pagination (returns new arrays, never mutates)
 - `scanner.ts` — orchestrator that wires discovery → parser → indexer with batching and caching
-- `loader/*` — the tiny `.cjs`/`.js` files that ship to npm as the package's `main`/`module`/`bin` entrypoints. They dispatch to `dist/node-<major>/*.jsc` at runtime; on miss they throw with the supported-majors list. The ESM loader (`loader/index.js`) hand-enumerates named exports so it can re-export them from the CJS-only `.jsc` — when adding a new runtime export to `src/index.ts`, also add it to the destructure list in `loader/index.js`.
+
+### Distribution model
+
+This package is consumed via **npm's git URL dependency** mechanism, not via npm publish. Consumers declare `"@threadbase/scanner": "github:RonenMars/threadbase-scanner#<tag>"` in their `package.json`. On install, npm clones this repo at the specified tag, runs `prepare` (which runs `npm run build` → `tsup`), and the resulting `dist/` is what consumers `require`/`import`.
+
+`dist/` is gitignored — it's only ever produced by the `prepare` script during install (or by hand during local development). The `prepare` script is what makes this distribution model work.
+
+A previous attempt at publishing to npm with V8 bytecode (`bytenode`) protection was abandoned after discovering bytenode `.jsc` files are not cross-platform. See `docs/plans/bytenode-npm-package.md` for the full lessons-learned record.
 
 ## Code Conventions
 

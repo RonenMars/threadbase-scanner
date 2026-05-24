@@ -18,29 +18,19 @@ Unified Claude Code conversation history scanner. Combines the best parts of fou
 
 ## Installation
 
-```bash
-npm install @ronenmars/threadbase-scanner
+This package is consumed from a public GitHub repo, not published to npm.
+
+To use it in your project, add it as a git URL dependency in your `package.json`:
+
+```json
+"dependencies": {
+  "@threadbase/scanner": "github:RonenMars/threadbase-scanner#v0.3.0"
+}
 ```
 
-### Supported Node versions
+Then run `npm install`. npm will clone this repo at tag `v0.3.0`, run its `prepare` script to build `dist/`, and make the package available under `node_modules/@threadbase/scanner/`.
 
-`@ronenmars/threadbase-scanner` ships as V8 bytecode (`.jsc`) compiled for specific Node majors. The published npm tarball contains pre-compiled bytecode for each supported version under `dist/node-<major>/`; a small loader picks the right one at runtime based on `process.versions.node`.
-
-| Node major | Status |
-|-----------|--------|
-| 22        | LTS (active until April 2027) |
-| 23        | EOL (June 2025) — still supported by us |
-| 24        | LTS (current) |
-| 25        | Current (will become LTS Oct 2026) |
-| 26        | Current (releases April 2026) |
-
-Running on an unsupported Node major produces a clear error at module load:
-
-```
-Error: @ronenmars/threadbase-scanner does not support Node 20.x.y. Supported majors: 22, 23, 24, 25, 26.
-```
-
-Upgrade to a supported Node version (we recommend the latest LTS).
+**Requires Node.js 18 or later.**
 
 ## Library Usage
 
