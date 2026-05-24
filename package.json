@@ -1,5 +1,5 @@
 {
-  "name": "@ronenmars/threadbase-scanner",
+  "name": "@threadbase/scanner",
   "version": "0.3.0",
   "description": "Unified Claude Code conversation history scanner",
   "license": "MIT",

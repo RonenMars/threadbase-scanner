@@ -1,4 +1,4 @@
-# @ronenmars/threadbase-scanner
+# @threadbase/scanner
 
 Unified Claude Code conversation history scanner. Combines the best parts of four independent scanner implementations (VS Code, Electron, IntelliJ, CLI) into a single TypeScript package.
 
@@ -35,7 +35,7 @@ Then run `npm install`. npm will clone this repo at tag `v0.3.0`, run its `prepa
 ## Library Usage
 
 ```typescript
-import { scan, search, getConversation, ConversationScanner } from '@ronenmars/threadbase-scanner'
+import { scan, search, getConversation, ConversationScanner } from '@threadbase/scanner'
 
 // Quick scan with defaults
 const result = await scan()
@@ -72,7 +72,7 @@ for (const msg of conv.messages) {
 ### Using the class directly
 
 ```typescript
-import { ConversationScanner } from '@ronenmars/threadbase-scanner'
+import { ConversationScanner } from '@threadbase/scanner'
 
 const scanner = new ConversationScanner({ conversationCacheSize: 10 })
 
@@ -122,7 +122,7 @@ await scan({
 The convenience functions `scan`, `search`, and `getConversation` share a lazy module-level `ConversationScanner` so the FlexSearch index and conversation LRU survive across calls. A first `scan()` warms state; a subsequent `search()` reuses the already-built index instead of re-walking the filesystem.
 
 ```typescript
-import { scan, search, getConversation, resetDefaultScanner } from '@ronenmars/threadbase-scanner'
+import { scan, search, getConversation, resetDefaultScanner } from '@threadbase/scanner'
 
 await scan({ profiles })          // warms the shared scanner
 await search('auth', { profiles }) // hits the in-memory index — no re-scan
@@ -135,7 +135,7 @@ resetDefaultScanner()
 To run isolated state (parallel scans with different options, multi-tenant hosts, etc.) pass an explicit scanner as the optional third parameter:
 
 ```typescript
-import { ConversationScanner, scan, search } from '@ronenmars/threadbase-scanner'
+import { ConversationScanner, scan, search } from '@threadbase/scanner'
 
 const work = new ConversationScanner()
 const personal = new ConversationScanner()
@@ -154,7 +154,7 @@ The library uses [pino](https://getpino.io) internally and ships with a default 
 
 ```typescript
 import pino from 'pino'
-import { setLogger, createLogger } from '@ronenmars/threadbase-scanner'
+import { setLogger, createLogger } from '@threadbase/scanner'
 
 // Use your own pino instance
 setLogger(pino({ level: 'info' }))
@@ -175,7 +175,7 @@ Log events the scanner emits include `scan: start` / `scan: complete` (with timi
 ### Profiles
 
 ```typescript
-import { loadProfiles, saveProfiles } from '@ronenmars/threadbase-scanner'
+import { loadProfiles, saveProfiles } from '@threadbase/scanner'
 
 // Load from ~/.config/threadbase-scanner/profiles.json
 const profiles = await loadProfiles('~/.config/threadbase-scanner')
@@ -193,7 +193,7 @@ await scan({
 
 ```bash
 # Install globally
-npm install -g @ronenmars/threadbase-scanner
+npm install -g @threadbase/scanner
 
 # Scan all conversations
 threadbase-scanner scan
