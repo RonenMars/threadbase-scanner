@@ -69,7 +69,7 @@ scanner/
 - [ ] **Step 1: Create package.json**
 
 ```bash
-mkdir -p /Users/ronen/Desktop/dev/personal/threadbase/scanner
+mkdir -p ~/Desktop/threadbase/scanner
 ```
 
 Create `scanner/package.json`:
