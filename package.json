@@ -1,8 +1,28 @@
 {
   "name": "@threadbase/scanner",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Unified Claude Code conversation history scanner",
   "license": "MIT",
+  "author": {
+    "name": "Ronen Mars",
+    "email": "ronenmars@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RonenMars/threadbase-scanner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RonenMars/threadbase-scanner/issues"
+  },
+  "homepage": "https://github.com/RonenMars/threadbase-scanner#readme",
+  "keywords": [
+    "claude-code",
+    "jsonl",
+    "scanner",
+    "conversation-history",
+    "flexsearch",
+    "cli"
+  ],
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
