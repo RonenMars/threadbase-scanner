@@ -1,6 +1,11 @@
 # @threadbase/scanner
 
-Unified Claude Code conversation history scanner. Combines the best parts of four independent scanner implementations (VS Code, Electron, IntelliJ, CLI) into a single TypeScript package.
+Unified Claude Code conversation history scanner.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+
+Combines the best parts of four independent scanner implementations (VS Code, Electron, IntelliJ, CLI) into a single TypeScript package.
 
 ## Features
 
@@ -267,6 +272,14 @@ npm test          # run tests
 npm run build     # build ESM + CJS + types
 npm run lint      # type check
 ```
+
+## Contributing
+
+Small bugfixes and parser improvements are welcome. For design changes, please open an issue first to discuss the shape before opening a PR.
+
+- Use conventional commits (`feat:`, `fix:`, `chore:`, etc.) — see [`CLAUDE.md`](./CLAUDE.md) for project conventions.
+- Run `npm run lint && npm test` before opening a PR.
+- New features need an integration or e2e test in `__tests__/`; new parser cases need a fixture in `__fixtures__/`.
 
 ## Architecture
 
