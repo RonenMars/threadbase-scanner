@@ -16,6 +16,7 @@ import { parseConversation, parseMeta } from "./parser";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { resolveTier } from "./tiers";
 import type {
+  ContentTier,
   Conversation,
   ConversationMeta,
   GetConversationOptions,
@@ -37,6 +38,9 @@ export class ConversationScanner {
   private sessionIdIndex: Map<string, ConversationMeta> = new Map();
   private projects: Set<string> = new Set();
   private indexer: SearchIndexer = new SearchIndexer();
+  // Tier the most recent scan() ran with, so refreshFile() re-parses a single
+  // file at the same content depth. Defaults to the standard tier.
+  private lastTier: ContentTier = resolveTier("standard");
 
   constructor(options?: { metadataCacheSize?: number; conversationCacheSize?: number }) {
     this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
@@ -49,6 +53,7 @@ export class ConversationScanner {
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
 
     const tier = resolveTier(options.tier ?? "standard", options.tiers);
+    this.lastTier = tier;
 
     log.info(
       {
@@ -240,6 +245,73 @@ export class ConversationScanner {
       log.warn({ id, filePath: meta.filePath, err }, "getConversation: parse failed");
       return null;
     }
+  }
+
+  // Re-parse a single JSONL file and update every in-memory index in place —
+  // metadata cache, sessionId index, project set, search index — and evict the
+  // file's parsed conversation from the LRU so the next getConversation()
+  // re-reads it. This lets a long-lived scanner stay current with a file that
+  // grew after the initial scan() without paying for a full rescan.
+  //
+  // `account` defaults to the account already recorded for this file (the id
+  // is the file path), falling back to "default" for a file the scanner has
+  // not seen before. Returns the fresh ConversationMeta, or null when the file
+  // no longer parses (missing/empty) — in which case any prior entry for it is
+  // dropped from all indexes.
+  async refreshFile(filePath: string, account?: string): Promise<ConversationMeta | null> {
+    const log = getLogger();
+    const previous = this.metadataCache.get(filePath);
+    const resolvedAccount = account ?? previous?.account ?? "default";
+
+    let meta: ConversationMeta | null = null;
+    try {
+      meta = await parseMeta(filePath, resolvedAccount, this.lastTier);
+    } catch (err) {
+      log.warn({ filePath, err }, "refreshFile: parseMeta threw");
+      meta = null;
+    }
+
+    // The LRU is keyed by the id used at getConversation() time, which can be
+    // either the file-path id or the sessionId — evict both for the prior and
+    // refreshed metas so no stale parse survives.
+    const evict = (m: ConversationMeta | undefined | null) => {
+      if (!m) return;
+      this.conversationLRU.delete(m.id);
+      this.conversationLRU.delete(m.sessionId);
+    };
+    evict(previous);
+    evict(meta);
+
+    if (!meta || meta.messageCount === 0) {
+      if (previous) {
+        this.metadataCache.delete(previous.id);
+        this.sessionIdIndex.delete(previous.sessionId);
+        this.indexer.removeDocument(previous.id);
+      }
+      log.debug({ filePath }, "refreshFile: dropped (no parseable messages)");
+      return null;
+    }
+
+    meta.gitBranch = readGitBranch(meta.projectPath);
+
+    // A re-parse can change the sessionId mapping; clear the old one first.
+    if (previous && previous.sessionId !== meta.sessionId) {
+      this.sessionIdIndex.delete(previous.sessionId);
+    }
+    this.metadataCache.set(meta.id, meta);
+    this.sessionIdIndex.set(meta.sessionId, meta);
+    this.projects.add(meta.projectPath);
+    if (previous) {
+      this.indexer.updateDocument(meta);
+    } else {
+      this.indexer.addDocument(meta);
+    }
+
+    log.debug(
+      { filePath, messageCount: meta.messageCount },
+      "refreshFile: updated in-memory indexes",
+    );
+    return meta;
   }
 
   getMetadataCache(): Map<string, ConversationMeta> {

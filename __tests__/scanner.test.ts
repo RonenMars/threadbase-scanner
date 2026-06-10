@@ -140,4 +140,73 @@ describe("ConversationScanner", () => {
     const result = await scanner.scan({ profiles: [noScanProfile] });
     expect(result.conversations).toHaveLength(0);
   });
+
+  describe("refreshFile", () => {
+    const filePath = () => join(tempDir, "projects", "my-project", "session1.jsonl");
+
+    it("picks up messages appended after the initial scan", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      const before = await scanner.getConversation("sess-1");
+      expect(before?.messageCount).toBe(2);
+
+      writeFileSync(
+        filePath(),
+        `${[
+          VALID_LINE("u1", "2026-01-15T10:00:00.000Z", "Hello"),
+          ASSISTANT_LINE("u2", "2026-01-15T10:00:05.000Z", "Hi there"),
+          VALID_LINE("u5", "2026-01-16T09:00:00.000Z", "One more thing"),
+          ASSISTANT_LINE("u6", "2026-01-16T09:00:05.000Z", "the real latest message"),
+        ].join("\n")}\n`,
+      );
+
+      const meta = await scanner.refreshFile(filePath());
+      expect(meta?.messageCount).toBe(4);
+
+      // The stale parsed conversation must be evicted so the next read re-parses.
+      const after = await scanner.getConversation("sess-1");
+      expect(after?.messageCount).toBe(4);
+      expect(after?.messages.at(-1)?.text).toContain("the real latest message");
+    });
+
+    it("keeps the search index in sync with the refreshed content", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      writeFileSync(
+        filePath(),
+        `${[
+          VALID_LINE("u1", "2026-01-15T10:00:00.000Z", "supercalifragilistic"),
+          ASSISTANT_LINE("u2", "2026-01-15T10:00:05.000Z", "indexed reply"),
+        ].join("\n")}\n`,
+      );
+      await scanner.refreshFile(filePath());
+
+      const results = await scanner.search("supercalifragilistic");
+      expect(results.some((r) => r.meta.sessionId === "sess-1")).toBe(true);
+    });
+
+    it("returns null and drops the entry when the file no longer parses", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+      // metadataCache is keyed by meta.id, which the parser sets to the file path.
+      expect(scanner.getMetadataCache().has(filePath())).toBe(true);
+
+      // Empty the file so parseMeta yields no messages.
+      writeFileSync(filePath(), "");
+      const meta = await scanner.refreshFile(filePath());
+
+      expect(meta).toBeNull();
+      expect(scanner.getMetadataCache().has(filePath())).toBe(false);
+      expect(await scanner.getConversation("sess-1")).toBeNull();
+    });
+
+    it("returns null for a path that was never scanned", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+      const meta = await scanner.refreshFile(join(tempDir, "projects", "nope", "ghost.jsonl"));
+      expect(meta).toBeNull();
+    });
+  });
 });
