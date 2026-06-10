@@ -140,6 +140,30 @@ export class SearchIndexer {
     return this.documents.size;
   }
 
+  // Replace an already-indexed document in place. FlexSearch's `add` does not
+  // overwrite an existing id, so a single-file refresh must go through
+  // `update` to avoid stale matches lingering in the index.
+  updateDocument(meta: ConversationMeta): void {
+    this.documents.set(meta.id, meta);
+    this.index.update({
+      id: meta.id,
+      content: meta.contentSnippet,
+      projectName: meta.projectName,
+      projectPath: meta.projectPath,
+      sessionId: meta.sessionId,
+      sessionName: meta.sessionName,
+      account: meta.account,
+      model: meta.model || "",
+      gitBranch: meta.gitBranch || "",
+      toolNames: meta.toolNames.join(" "),
+    });
+  }
+
+  removeDocument(id: string): void {
+    this.documents.delete(id);
+    this.index.remove(id);
+  }
+
   clear(): void {
     this.documents.clear();
     this.index = this.createIndex();
