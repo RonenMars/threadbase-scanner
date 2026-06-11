@@ -19,7 +19,9 @@ import type {
   ContentTier,
   Conversation,
   ConversationMeta,
+  ConversationPage,
   GetConversationOptions,
+  GetConversationPageOptions,
   GroupedConversations,
   Profile,
   ScanOptions,
@@ -245,6 +247,41 @@ export class ConversationScanner {
       log.warn({ id, filePath: meta.filePath, err }, "getConversation: parse failed");
       return null;
     }
+  }
+
+  // Return one bounded window of a conversation's messages plus the total
+  // message count, so a caller can serve the last page and scroll back without
+  // holding the whole conversation itself.
+  //
+  // The window is `[max(0, beforeIndex - limit), beforeIndex)` in chronological
+  // order; `beforeIndex` defaults to `total` (the newest page). `fromIndex` is
+  // the window's start index, so the caller can derive `has_more_older`
+  // (fromIndex > 0). Returns null when the id can't be resolved/parsed — the
+  // same contract as getConversation.
+  //
+  // Strategy: parse-once-then-slice. This delegates to getConversation, which
+  // parses the full conversation and caches it in conversationLRU, then slices
+  // the window. Message indices are therefore identical to a full
+  // parseConversation() by construction (same parse, same messages array).
+  // Repeated page requests for the same id reuse the single cached parse. The
+  // bounded-memory win (not holding all messages) is deferred — see
+  // docs/plans/2026-06-10-paged-conversation-parse.md.
+  async getConversationPage(
+    id: string,
+    options: GetConversationPageOptions,
+  ): Promise<ConversationPage | null> {
+    const conversation = await this.getConversation(id);
+    if (!conversation) return null;
+
+    const { messages } = conversation;
+    const total = messages.length;
+    const { limit } = options;
+    const beforeIndex = options.beforeIndex ?? total;
+
+    const fromIndex = Math.max(0, beforeIndex - limit);
+    const window = messages.slice(fromIndex, beforeIndex);
+
+    return { messages: window, total, fromIndex };
   }
 
   // Re-parse a single JSONL file and update every in-memory index in place —

@@ -117,6 +117,17 @@ export interface GetConversationOptions {
   profiles?: Profile[];
 }
 
+export interface GetConversationPageOptions {
+  beforeIndex?: number;
+  limit: number;
+}
+
+export interface ConversationPage {
+  messages: ConversationMessage[];
+  total: number;
+  fromIndex: number;
+}
+
 // ─── Full Conversation ──────────────────────────────────────────────
 
 export interface TurnDuration {
