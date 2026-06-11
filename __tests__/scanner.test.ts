@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -139,6 +139,97 @@ describe("ConversationScanner", () => {
     const scanner = new ConversationScanner();
     const result = await scanner.scan({ profiles: [noScanProfile] });
     expect(result.conversations).toHaveLength(0);
+  });
+
+  describe("getConversationPage", () => {
+    // The paged fixture mixes plain user/assistant text with thinking blocks
+    // and tool_use/tool_result pairs, so windowed indices must line up with the
+    // full parse's line→message reduction. sessionId is "sess-page".
+    const PAGED_SESSION = "sess-page";
+    const FIXTURE = join(__dirname, "..", "__fixtures__", "paged-conversation.jsonl");
+
+    beforeEach(() => {
+      copyFileSync(FIXTURE, join(tempDir, "projects", "my-project", "paged.jsonl"));
+    });
+
+    it("returns the newest page when beforeIndex is omitted", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      const full = await scanner.getConversation(PAGED_SESSION);
+      const total = full?.messages.length ?? 0;
+      expect(total).toBeGreaterThan(10);
+
+      const page = await scanner.getConversationPage(PAGED_SESSION, { limit: 10 });
+      expect(page).not.toBeNull();
+      expect(page?.total).toBe(total);
+      expect(page?.fromIndex).toBe(total - 10);
+      expect(page?.messages).toHaveLength(10);
+      expect(page?.messages).toEqual(full?.messages.slice(total - 10, total));
+    });
+
+    it("scrolls back a page using the previous fromIndex", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      const full = await scanner.getConversation(PAGED_SESSION);
+      const total = full?.messages.length ?? 0;
+
+      const newest = await scanner.getConversationPage(PAGED_SESSION, { limit: 10 });
+      const back = await scanner.getConversationPage(PAGED_SESSION, {
+        beforeIndex: newest?.fromIndex,
+        limit: 10,
+      });
+
+      expect(back?.fromIndex).toBe(total - 20);
+      expect(back?.messages).toHaveLength(10);
+      expect(back?.messages).toEqual(full?.messages.slice(total - 20, total - 10));
+    });
+
+    it("clamps the first page to index 0 when beforeIndex <= limit", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      const full = await scanner.getConversation(PAGED_SESSION);
+
+      const page = await scanner.getConversationPage(PAGED_SESSION, { beforeIndex: 6, limit: 10 });
+      expect(page?.fromIndex).toBe(0);
+      expect(page?.messages).toHaveLength(6);
+      expect(page?.messages).toEqual(full?.messages.slice(0, 6));
+    });
+
+    it("matches the corresponding slice of a full parse for several windows", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      const full = await scanner.getConversation(PAGED_SESSION);
+      const total = full?.messages.length ?? 0;
+
+      const windows: Array<{ beforeIndex?: number; limit: number }> = [
+        { limit: 10 },
+        { beforeIndex: total, limit: 5 },
+        { beforeIndex: 6, limit: 6 }, // boundary across thinking/tool blocks
+        { beforeIndex: 4, limit: 10 }, // clamps to 0
+        { beforeIndex: 20, limit: 7 },
+        { beforeIndex: 0, limit: 10 }, // empty window
+      ];
+
+      for (const opts of windows) {
+        const page = await scanner.getConversationPage(PAGED_SESSION, opts);
+        const beforeIndex = opts.beforeIndex ?? total;
+        const expectedFrom = Math.max(0, beforeIndex - opts.limit);
+        expect(page?.fromIndex).toBe(expectedFrom);
+        expect(page?.total).toBe(total);
+        expect(page?.messages).toEqual(full?.messages.slice(expectedFrom, beforeIndex));
+      }
+    });
+
+    it("returns null for an unknown id", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+      const page = await scanner.getConversationPage("does-not-exist", { limit: 10 });
+      expect(page).toBeNull();
+    });
   });
 
   describe("refreshFile", () => {
