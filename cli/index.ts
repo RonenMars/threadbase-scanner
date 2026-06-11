@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import pino from "pino";
+import { version } from "../package.json";
 import { setLogger } from "../src/logger";
 import { registerListCommand } from "./commands/list";
 import { registerProfilesCommand } from "./commands/profiles";
@@ -25,7 +26,7 @@ setLogger(
 const program = new Command()
   .name("threadbase-scanner")
   .description("Unified Claude Code conversation history scanner")
-  .version("0.1.0");
+  .version(version);
 
 registerListCommand(program);
 registerSearchCommand(program);
