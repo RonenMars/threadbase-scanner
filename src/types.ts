@@ -128,6 +128,13 @@ export interface ConversationPage {
   fromIndex: number;
 }
 
+// A page sliced directly from a single parsed JSONL file, carrying the parsed
+// Conversation alongside the window so a caller can build a full response
+// (meta + messages) from one parse, without a prior scan().
+export interface SingleFilePage extends ConversationPage {
+  conversation: Conversation;
+}
+
 // ─── Full Conversation ──────────────────────────────────────────────
 
 export interface TurnDuration {

@@ -232,6 +232,68 @@ describe("ConversationScanner", () => {
     });
   });
 
+  describe("parseSingleFilePage", () => {
+    const PAGED_SESSION = "sess-page";
+    const FIXTURE = join(__dirname, "..", "__fixtures__", "paged-conversation.jsonl");
+
+    it("parses a single file and slices a page without any prior scan", async () => {
+      // No scan(): parseSingleFilePage works straight off the file path. This
+      // is the cold-start fast path.
+      const scanner = new ConversationScanner();
+
+      // Reference: the same file fully parsed via a scanned scanner.
+      const scanned = new ConversationScanner();
+      copyFileSync(FIXTURE, join(tempDir, "projects", "my-project", "paged.jsonl"));
+      await scanned.scan({ profiles: [profile] });
+      const full = await scanned.getConversation(PAGED_SESSION);
+      const total = full?.messages.length ?? 0;
+      expect(total).toBeGreaterThan(10);
+
+      const page = await scanner.parseSingleFilePage(FIXTURE, "default", { limit: 10 });
+      expect(page).not.toBeNull();
+      expect(page?.total).toBe(total);
+      expect(page?.fromIndex).toBe(total - 10);
+      expect(page?.messages).toHaveLength(10);
+      expect(page?.messages).toEqual(full?.messages.slice(total - 10, total));
+      // The parsed conversation is returned alongside the window.
+      expect(page?.conversation.messages).toHaveLength(total);
+    });
+
+    it("matches a full parse for several windows", async () => {
+      const scanner = new ConversationScanner();
+      const ref = await scanner.parseSingleFilePage(FIXTURE, "default", { limit: 100000 });
+      const total = ref?.total ?? 0;
+      const all = ref?.conversation.messages ?? [];
+
+      const windows: Array<{ beforeIndex?: number; limit: number }> = [
+        { limit: 10 },
+        { beforeIndex: total, limit: 5 },
+        { beforeIndex: 6, limit: 6 },
+        { beforeIndex: 4, limit: 10 },
+        { beforeIndex: 0, limit: 10 },
+      ];
+
+      for (const opts of windows) {
+        const page = await scanner.parseSingleFilePage(FIXTURE, "default", opts);
+        const beforeIndex = opts.beforeIndex ?? total;
+        const expectedFrom = Math.max(0, beforeIndex - opts.limit);
+        expect(page?.fromIndex).toBe(expectedFrom);
+        expect(page?.total).toBe(total);
+        expect(page?.messages).toEqual(all.slice(expectedFrom, beforeIndex));
+      }
+    });
+
+    it("returns null for a missing file", async () => {
+      const scanner = new ConversationScanner();
+      const page = await scanner.parseSingleFilePage(
+        join(tempDir, "does-not-exist.jsonl"),
+        "default",
+        { limit: 10 },
+      );
+      expect(page).toBeNull();
+    });
+  });
+
   describe("refreshFile", () => {
     const filePath = () => join(tempDir, "projects", "my-project", "session1.jsonl");
 
