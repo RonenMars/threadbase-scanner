@@ -28,6 +28,7 @@ import type {
   ScanResult,
   SearchOptions,
   SearchResult,
+  SingleFilePage,
   TreeConversation,
 } from "./types";
 
@@ -86,6 +87,20 @@ export class ConversationScanner {
     let parseFailures = 0;
 
     const allMetas: ConversationMeta[] = [];
+    // Memoize git-branch lookups per project path for the duration of this
+    // scan. readGitBranch walks the filesystem for .git/HEAD; without this it
+    // runs once per conversation (thousands of times) even though there are
+    // only a handful of distinct project roots. Scoped to one scan() call —
+    // branches can change between scans, so a longer-lived memo would go stale.
+    const gitBranchMemo = new Map<string, string | null>();
+    const resolveGitBranch = (projectPath: string): string | null => {
+      let branch = gitBranchMemo.get(projectPath);
+      if (branch === undefined) {
+        branch = readGitBranch(projectPath);
+        gitBranchMemo.set(projectPath, branch);
+      }
+      return branch;
+    };
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
@@ -93,7 +108,7 @@ export class ConversationScanner {
           try {
             const meta = await parseMeta(filePath, account, tier);
             if (meta) {
-              meta.gitBranch = readGitBranch(meta.projectPath);
+              meta.gitBranch = resolveGitBranch(meta.projectPath);
             }
             return meta;
           } catch (err) {
@@ -282,6 +297,35 @@ export class ConversationScanner {
     const window = messages.slice(fromIndex, beforeIndex);
 
     return { messages: window, total, fromIndex };
+  }
+
+  // Parse one JSONL file directly and slice a page window — without any prior
+  // scan() or metadata index. This is the cold-start fast path: a single
+  // conversation can be served from one file parse (~ms) instead of waiting
+  // for a full filesystem scan. The window is the same
+  // `[max(0, beforeIndex - limit), beforeIndex)` slice as getConversationPage,
+  // and the parsed Conversation is returned alongside so the caller can build
+  // the response meta (projectPath, timestamp, messageCount, …) without a
+  // second parse. Returns null when the file can't be parsed. `account` only
+  // feeds the conversation's account field; "default" is the single-profile
+  // fallback, matching refreshFile.
+  async parseSingleFilePage(
+    filePath: string,
+    account: string | undefined,
+    options: GetConversationPageOptions,
+  ): Promise<SingleFilePage | null> {
+    const conversation = await parseConversation(filePath, account ?? "default");
+    if (!conversation) return null;
+
+    const { messages } = conversation;
+    const total = messages.length;
+    const { limit } = options;
+    const beforeIndex = options.beforeIndex ?? total;
+
+    const fromIndex = Math.max(0, beforeIndex - limit);
+    const window = messages.slice(fromIndex, beforeIndex);
+
+    return { messages: window, total, fromIndex, conversation };
   }
 
   // Re-parse a single JSONL file and update every in-memory index in place —
