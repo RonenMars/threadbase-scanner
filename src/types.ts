@@ -76,6 +76,11 @@ export interface GroupedConversations {
 
 // ─── Options ────────────────────────────────────────────────────────
 
+export interface FileStatEntry {
+  mtimeMs: number;
+  size: number;
+}
+
 export interface ScanOptions {
   profiles?: Profile[];
   tier?: string;
@@ -90,6 +95,9 @@ export interface ScanOptions {
   offset?: number;
   onProgress?: (scanned: number, total: number) => void;
   onBatch?: (metas: ConversationMeta[]) => void;
+  /** Known file stats from a previous scan. Files whose (mtimeMs, size) match
+   *  are skipped — the cached ConversationMeta is reused instead. */
+  statCache?: Map<string, { stat: FileStatEntry; meta: ConversationMeta }>;
 }
 
 export interface ScanResult {
