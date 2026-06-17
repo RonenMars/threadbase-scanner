@@ -16,15 +16,4 @@ changelog:
       types:
         - "perf"
     - title: "Other Changes"
-      labels:
-        - "chore"
-        - "refactor"
-        - "docs"
-        - "test"
-        - "ci"
-      types:
-        - "chore"
-        - "refactor"
-        - "docs"
-        - "test"
-        - "ci"
+      exclude: []
