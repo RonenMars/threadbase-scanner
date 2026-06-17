@@ -1,3 +1,4 @@
+import { statSync } from "fs";
 import { LRUCache } from "./cache";
 import { discoverJsonlFiles } from "./discovery";
 import {
@@ -101,10 +102,24 @@ export class ConversationScanner {
       }
       return branch;
     };
+    const { statCache } = options;
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
         batch.map(async ({ filePath, account }) => {
+          if (statCache) {
+            const cached = statCache.get(filePath);
+            if (cached) {
+              try {
+                const s = statSync(filePath);
+                if (s.mtimeMs === cached.stat.mtimeMs && s.size === cached.stat.size) {
+                  return cached.meta;
+                }
+              } catch {
+                // file disappeared — fall through to parseMeta which will return null
+              }
+            }
+          }
           try {
             const meta = await parseMeta(filePath, account, tier);
             if (meta) {
