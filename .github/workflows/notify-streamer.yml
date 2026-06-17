@@ -1,0 +1,26 @@
+name: Notify streamer on release tag
+
+# When a version tag (v*) is pushed to this repo, notify threadbase-streamer so
+# it can bump its vendor/scanner submodule to the new tag and open a PR.
+#
+# Requires a repository secret STREAMER_DISPATCH_PAT: a Personal Access Token
+# with "repo" scope (or fine-grained: Contents read/write on
+# RonenMars/threadbase-streamer). The default GITHUB_TOKEN cannot dispatch
+# across repositories.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    name: Dispatch scanner-released to streamer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch
+        env:
+          GH_TOKEN: ${{ secrets.STREAMER_DISPATCH_PAT }}
+        run: |
+          gh api -X POST repos/RonenMars/threadbase-streamer/dispatches \
+            -f event_type=scanner-released

@@ -78,11 +78,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
         run: npx semantic-release
-
-      - name: Notify streamer
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.STREAMER_DISPATCH_PAT }}
-        run: |
-          gh api -X POST repos/RonenMars/threadbase-streamer/dispatches \
-            -f event_type=scanner-released
