@@ -1,3 +1,9 @@
+## [0.7.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.7.0...v0.7.1) (2026-06-17)
+
+### Bug Fixes
+
+* **ci:** dispatch to streamer from release workflow, not tag push event ([#20](https://github.com/RonenMars/threadbase-scanner/issues/20)) ([12ef282](https://github.com/RonenMars/threadbase-scanner/commit/12ef2829980562b6def3f227d10934a4c057b087))
+
 ## [0.7.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.6.0...v0.7.0) (2026-06-17)
 
 ### Features
