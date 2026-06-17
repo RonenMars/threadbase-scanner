@@ -1,0 +1,27 @@
+changelog:
+  categories:
+    - title: "Features"
+      labels:
+        - "feat"
+      types:
+        - "feat"
+    - title: "Bug Fixes"
+      labels:
+        - "fix"
+      types:
+        - "fix"
+    - title: "Performance"
+      labels:
+        - "perf"
+      types:
+        - "perf"
+    - title: "Other Changes"
+      types:
+        - "chore"
+        - "refactor"
+        - "docs"
+        - "test"
+        - "ci"
+        - "style"
+        - "revert"
+        - "build"

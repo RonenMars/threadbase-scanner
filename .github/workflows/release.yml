@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Run semantic-release (tag + GitHub Release). When false, only the precheck runs."
+        type: boolean
+        default: false
+
+jobs:
+  release-precheck:
+    name: Precheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      should_release: ${{ steps.precheck.outputs.should_release }}
+      next_version: ${{ steps.precheck.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dry-run semantic-release
+        id: precheck
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          npx semantic-release --dry-run 2>&1 | tee /tmp/sr.log || true
+          if grep -qE 'The next release version is ' /tmp/sr.log; then
+            VERSION=$(grep -E 'The next release version is ' /tmp/sr.log | tail -n1 | sed -E 's/.*The next release version is ([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?).*/\1/')
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "next_version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "✅ Would release v$VERSION"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "next_version=" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No release-worthy commits — skipping publish."
+          fi
+
+  release:
+    name: Release
+    needs: release-precheck
+    if: |
+      needs.release-precheck.outputs.should_release == 'true' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
