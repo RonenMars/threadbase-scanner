@@ -16,4 +16,12 @@ changelog:
       types:
         - "perf"
     - title: "Other Changes"
-      exclude: []
+      types:
+        - "chore"
+        - "refactor"
+        - "docs"
+        - "test"
+        - "ci"
+        - "style"
+        - "revert"
+        - "build"
