@@ -1,3 +1,9 @@
+## [0.7.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.6.0...v0.7.0) (2026-06-17)
+
+### Features
+
+* **scanner:** add stat-based scan cache to skip unchanged files ([#17](https://github.com/RonenMars/threadbase-scanner/issues/17)) ([40b6274](https://github.com/RonenMars/threadbase-scanner/commit/40b6274b2740e3b7c2208c3c292da9d14bbc4dff))
+
 ## [0.6.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.5.0...v0.6.0) (2026-06-17)
 
 ### Features
