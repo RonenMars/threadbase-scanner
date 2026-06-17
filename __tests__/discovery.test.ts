@@ -87,4 +87,19 @@ describe("discoverJsonlFiles", () => {
 
     rmSync(dir2, { recursive: true, force: true });
   });
+
+  it("discovers all non-empty files when count exceeds the stat concurrency cap", async () => {
+    // More files than STAT_CONCURRENCY (32) to exercise multiple chunks; one
+    // empty file mixed in to confirm filtering still holds under concurrency.
+    const total = 70;
+    for (let i = 0; i < total; i++) {
+      createFile(`project/s${i}.jsonl`, i === 0 ? "" : '{"type":"user"}\n');
+    }
+    const result = await discoverJsonlFiles([{ projectsDir: tempDir, account: "default" }]);
+    expect(result).toHaveLength(total - 1);
+    const names = new Set(result.map((r) => r.filePath));
+    for (let i = 1; i < total; i++) {
+      expect([...names].some((n) => n.endsWith(`s${i}.jsonl`))).toBe(true);
+    }
+  });
 });
