@@ -1,3 +1,9 @@
+## [0.7.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.7.1...v0.7.2) (2026-06-18)
+
+### Performance Improvements
+
+* **discovery:** parallelize stat loop ([#21](https://github.com/RonenMars/threadbase-scanner/issues/21)) ([6385e11](https://github.com/RonenMars/threadbase-scanner/commit/6385e116f2caeda2290fd501374a12188b74e2c5))
+
 ## [0.7.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.7.0...v0.7.1) (2026-06-17)
 
 ### Bug Fixes
