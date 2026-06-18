@@ -9,6 +9,11 @@ export interface DiscoveredFile {
 
 const EXCLUDED_SEGMENTS = ["/memory/", "/tool-results/"];
 
+// stat() is cheap and IO-bound, so a large history scans much faster when the
+// calls run concurrently rather than one-at-a-time. Cap concurrency well under
+// typical fd limits.
+const STAT_CONCURRENCY = 32;
+
 export async function discoverJsonlFiles(
   dirs: { projectsDir: string; account: string }[],
   onProgress?: (found: number) => void,
@@ -32,22 +37,34 @@ export async function discoverJsonlFiles(
     // Filter out excluded directory segments
     const filtered = filePaths.filter((fp) => !EXCLUDED_SEGMENTS.some((seg) => fp.includes(seg)));
 
-    // Filter out empty files
+    // Filter out empty files. Stat concurrently in bounded chunks; chunk order
+    // is preserved and intra-chunk order follows the input, so discovery order
+    // is stable (downstream sorts anyway).
     let kept = 0;
     let skippedEmpty = 0;
     let skippedInaccessible = 0;
-    for (const filePath of filtered) {
-      try {
-        const s = await stat(filePath);
-        if (s.size > 0) {
+    for (let i = 0; i < filtered.length; i += STAT_CONCURRENCY) {
+      const chunk = filtered.slice(i, i + STAT_CONCURRENCY);
+      const statted = await Promise.all(
+        chunk.map(async (filePath) => {
+          try {
+            const s = await stat(filePath);
+            return { filePath, size: s.size };
+          } catch (err) {
+            log.warn({ filePath, err }, "discovery: stat failed");
+            return { filePath, size: -1 };
+          }
+        }),
+      );
+      for (const { filePath, size } of statted) {
+        if (size < 0) {
+          skippedInaccessible++;
+        } else if (size > 0) {
           results.push({ filePath, account });
           kept++;
         } else {
           skippedEmpty++;
         }
-      } catch (err) {
-        skippedInaccessible++;
-        log.warn({ filePath, err }, "discovery: stat failed");
       }
     }
 
