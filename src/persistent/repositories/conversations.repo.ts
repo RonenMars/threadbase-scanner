@@ -190,6 +190,18 @@ export class ConversationsRepo {
     return rows.map(rowToMeta);
   }
 
+  // Most recent active conversations, newest first. Backs the empty-query
+  // search path (mirrors the in-memory indexer's getRecent).
+  recent(limit: number): ConversationMeta[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM conversations WHERE status = 'active'
+         ORDER BY COALESCE(timestamp, '') DESC, source_path ASC LIMIT ?`,
+      )
+      .all(limit) as ConversationRow[];
+    return rows.map(rowToMeta);
+  }
+
   distinctProjects(): string[] {
     const rows = this.db
       .prepare(

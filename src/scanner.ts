@@ -18,6 +18,7 @@ import { getLogger } from "./logger";
 import { parseConversation, parseMeta } from "./parser";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
+import { generateMatches } from "./search-matches";
 import { resolveTier } from "./tiers";
 import type {
   ContentTier,
@@ -281,13 +282,11 @@ export class ConversationScanner {
     const log = getLogger();
     log.debug({ query, indexSize: this.indexer.getDocumentCount() }, "search: start");
 
+    let results: SearchResult[];
     if (this.persistent) {
-      // Phase 2: reuse FlexSearch as the query engine, sourcing documents from
-      // SQLite. Mirror the in-memory contract: only run a (re)index when the DB
-      // is empty — otherwise just warm the FlexSearch index from the rows
-      // already persisted (e.g. by a prior scan()/refreshFile()). This keeps a
-      // bare search() from rescanning the whole history on every call. (FTS5
-      // replaces this warm step in Phase 4.)
+      // SQLite FTS5 is the persistent search engine. Index once if the DB is
+      // empty (mirroring the in-memory "scan on first search" contract), then
+      // query FTS directly — no in-memory index to warm.
       const engine = this.engine();
       if (engine.conversations.count() === 0) {
         log.debug("search: persistent index empty, triggering scan");
@@ -295,16 +294,24 @@ export class ConversationScanner {
         const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
         await engine.indexAll(activeProfiles, { ...options, limit: undefined, offset: undefined });
       }
-      this.indexer.buildIndex(engine.allActive());
-    } else if (this.indexer.getDocumentCount() === 0) {
-      log.debug("search: index empty, triggering scan");
-      await this.scan({ ...options, limit: undefined, offset: undefined });
+      const metas = engine.searchMetas(query, (options.limit ?? 50) * 2);
+      results = query.trim()
+        ? metas.map((meta) => ({ meta, score: 1, matches: generateMatches(meta, query) }))
+        : metas.map((meta) => ({
+            meta,
+            score: 1,
+            matches: [{ field: "timestamp", snippet: meta.preview }],
+          }));
+    } else {
+      if (this.indexer.getDocumentCount() === 0) {
+        log.debug("search: index empty, triggering scan");
+        await this.scan({ ...options, limit: undefined, offset: undefined });
+      }
+      results = this.indexer.search(query, {
+        fields: options.fields,
+        limit: (options.limit ?? 50) * 2,
+      });
     }
-
-    let results = this.indexer.search(query, {
-      fields: options.fields,
-      limit: (options.limit ?? 50) * 2,
-    });
 
     if (options.include && options.include !== "all") {
       results = results.filter((r) => {

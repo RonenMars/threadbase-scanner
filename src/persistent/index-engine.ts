@@ -10,6 +10,7 @@ import { type TailReadResult, tailReduce } from "./jsonl-tail-reader";
 import { finalizeMeta, initialReducerState, type ReducerState } from "./metadata-reducer";
 import { ConversationFilesRepo } from "./repositories/conversation-files.repo";
 import { ConversationsRepo } from "./repositories/conversations.repo";
+import { FtsRepo } from "./repositories/fts.repo";
 
 const BATCH_SIZE = 12;
 
@@ -26,11 +27,13 @@ export class PersistentEngine {
   readonly db: DB;
   readonly files: ConversationFilesRepo;
   readonly conversations: ConversationsRepo;
+  readonly fts: FtsRepo;
 
   constructor(dbPath: string) {
     this.db = openDatabase(dbPath);
     this.files = new ConversationFilesRepo(this.db);
     this.conversations = new ConversationsRepo(this.db);
+    this.fts = new FtsRepo(this.db);
   }
 
   close(): void {
@@ -145,6 +148,7 @@ export class PersistentEngine {
     const fileId = this.files.ensure(filePath, account);
     const upsert = this.db.transaction(() => {
       this.conversations.upsert(fileId, meta);
+      this.fts.upsert(meta);
       this.files.updateCursor(fileId, {
         sizeBytes: stat.size,
         mtimeMs: stat.mtimeMs,
@@ -171,6 +175,7 @@ export class PersistentEngine {
     if (!existing) return;
     const tx = this.db.transaction(() => {
       this.conversations.deleteByFileId(existing.id);
+      this.fts.remove(filePath);
       this.files.setStatus(existing.id, "deleted");
     });
     tx();
@@ -188,6 +193,22 @@ export class PersistentEngine {
 
   getAllBySessionId(sessionId: string): ConversationMeta[] {
     return this.conversations.getAllBySessionId(sessionId);
+  }
+
+  // Ranked metas matching the FTS query, best first. Empty query returns the
+  // most recent conversations (mirroring the in-memory indexer's empty-query
+  // behavior). Resolves each FTS hit to its active conversation row.
+  searchMetas(query: string, limit: number): ConversationMeta[] {
+    if (!query.trim()) {
+      return this.conversations.recent(limit);
+    }
+    const paths = this.fts.search(query, limit);
+    const metas: ConversationMeta[] = [];
+    for (const path of paths) {
+      const meta = this.conversations.getBySourcePath(path);
+      if (meta) metas.push(meta);
+    }
+    return metas;
   }
 
   getProjects(): string[] {

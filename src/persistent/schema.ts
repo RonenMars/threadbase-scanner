@@ -101,4 +101,21 @@ CREATE INDEX IF NOT EXISTS idx_conversations_project_branch_recent ON conversati
 CREATE INDEX IF NOT EXISTS idx_conversations_account_recent ON conversations(account, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_subagent_recent ON conversations(is_subagent, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_team_recent ON conversations(team_name, timestamp DESC);
+
+-- Full-text search index over conversation content + metadata. Kept separate
+-- from the metadata tables so list-screen queries stay small and fast.
+-- source_path is UNINDEXED (stored, not tokenized) and links back to a
+-- conversations row. One FTS row per conversation, replaced on each upsert.
+CREATE VIRTUAL TABLE IF NOT EXISTS conversation_messages_fts USING fts5(
+  source_path UNINDEXED,
+  content,
+  project_name,
+  session_id,
+  session_name,
+  account,
+  model,
+  branch,
+  tool_names,
+  tokenize = 'unicode61'
+);
 `;
