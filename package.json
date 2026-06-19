@@ -60,6 +60,7 @@
     "update-baseline": "bash scripts/update-baseline.sh"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "commander": "^12.0.0",
     "fast-glob": "^3.3.0",
     "flexsearch": "^0.7.43",
@@ -74,6 +75,7 @@
     "@semantic-release/github": "^12.0.8",
     "@semantic-release/npm": "^13.1.5",
     "@semantic-release/release-notes-generator": "^14.1.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "semantic-release": "^25.0.5",

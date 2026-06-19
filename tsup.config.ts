@@ -8,6 +8,8 @@ export default defineConfig([
     sourcemap: true,
     clean: true,
     outDir: "dist",
+    // Native module — never bundle; resolve from node_modules at runtime.
+    external: ["better-sqlite3"],
   },
   {
     entry: { cli: "cli/index.ts" },
@@ -15,5 +17,6 @@ export default defineConfig([
     banner: { js: "#!/usr/bin/env node" },
     sourcemap: true,
     outDir: "dist",
+    external: ["better-sqlite3"],
   },
 ]);
