@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS conversations (
   last_message_sender TEXT NOT NULL DEFAULT 'user',
   timestamp TEXT,
 
+  -- Monotonic write counter; the highest value is the most recently indexed
+  -- row. Drives last-writer-wins resolution for shared session_ids (matching
+  -- the in-memory sessionId map), at the sub-second precision updated_at lacks.
+  index_seq INTEGER NOT NULL DEFAULT 0,
+
   first_sent_at TEXT,
   first_sent_text TEXT,
 

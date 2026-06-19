@@ -74,13 +74,15 @@ export class ConversationsRepo {
         `INSERT INTO conversations (
            file_id, source_path, session_id, session_name, project_path, project_name,
            account, branch, preview, content_snippet, message_count, last_message_sender,
-           timestamp, first_sent_at, first_sent_text, last_sent_at, last_sent_text,
+           timestamp, index_seq, first_sent_at, first_sent_text, last_sent_at, last_sent_text,
            model, is_subagent, parent_session_id, is_teammate, team_name, tool_names_json,
            last_prompt, status, updated_at
          ) VALUES (
            @file_id, @source_path, @session_id, @session_name, @project_path, @project_name,
            @account, @branch, @preview, @content_snippet, @message_count, @last_message_sender,
-           @timestamp, @first_sent_at, @first_sent_text, @last_sent_at, @last_sent_text,
+           @timestamp,
+           (SELECT COALESCE(MAX(index_seq), 0) + 1 FROM conversations),
+           @first_sent_at, @first_sent_text, @last_sent_at, @last_sent_text,
            @model, @is_subagent, @parent_session_id, @is_teammate, @team_name, @tool_names_json,
            @last_prompt, 'active', CURRENT_TIMESTAMP
          )
@@ -109,6 +111,7 @@ export class ConversationsRepo {
            tool_names_json = excluded.tool_names_json,
            last_prompt = excluded.last_prompt,
            status = 'active',
+           index_seq = (SELECT COALESCE(MAX(index_seq), 0) + 1 FROM conversations),
            updated_at = CURRENT_TIMESTAMP`,
       )
       .run({
@@ -146,19 +149,36 @@ export class ConversationsRepo {
     return row ? rowToMeta(row) : null;
   }
 
-  // Dual lookup matching scanner.getConversation: resolve by source_path (==id)
-  // first, then by session_id (most-recent wins, mirroring the in-memory map's
-  // last-writer-wins behavior).
+  // Dual lookup matching scanner.getConversation: resolve by source_path (the
+  // canonical id) first, then by session_id.
+  //
+  // session_id is NOT unique (see schema header) — the sessionId form is a
+  // compatibility convenience. Resolution is deterministic: among active rows
+  // sharing the session_id, pick the most recent (latest timestamp, then
+  // updated_at), tie-broken by source_path. Collision-safe callers should use
+  // getAllBySessionId() instead.
   getByIdOrSession(id: string): ConversationMeta | null {
     const direct = this.getBySourcePath(id);
     if (direct) return direct;
     const row = this.db
       .prepare(
         `SELECT * FROM conversations WHERE session_id = ? AND status = 'active'
-         ORDER BY timestamp DESC LIMIT 1`,
+         ORDER BY index_seq DESC, source_path ASC LIMIT 1`,
       )
       .get(id) as ConversationRow | undefined;
     return row ? rowToMeta(row) : null;
+  }
+
+  // All active conversations sharing a session_id, newest first. Collision-safe
+  // counterpart to the convenience getByIdOrSession() sessionId lookup.
+  getAllBySessionId(sessionId: string): ConversationMeta[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM conversations WHERE session_id = ? AND status = 'active'
+         ORDER BY index_seq DESC, source_path ASC`,
+      )
+      .all(sessionId) as ConversationRow[];
+    return rows.map(rowToMeta);
   }
 
   // All active metas (unsorted/unfiltered) — callers apply the existing

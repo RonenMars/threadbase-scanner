@@ -1,4 +1,6 @@
 import { statSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { LRUCache } from "./cache";
 import { discoverJsonlFiles } from "./discovery";
 import {
@@ -14,6 +16,7 @@ import { readGitBranch } from "./git";
 import { SearchIndexer } from "./indexer";
 import { getLogger } from "./logger";
 import { parseConversation, parseMeta } from "./parser";
+import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { resolveTier } from "./tiers";
 import type {
@@ -36,6 +39,25 @@ import type {
 const BATCH_SIZE = 12;
 const DEFAULT_CONFIG_PATH = "~/.config/threadbase-scanner";
 
+// Default persistent-index location. Overridable via TB_SCANNER_DB (used by
+// tests for isolation, and handy for pointing at an alternate DB in ops).
+function defaultDbPath(): string {
+  return process.env.TB_SCANNER_DB ?? join(homedir(), ".config", "threadbase-scanner", "index.db");
+}
+
+export interface PersistentConfig {
+  dbPath?: string;
+}
+
+export interface ConversationScannerOptions {
+  metadataCacheSize?: number;
+  conversationCacheSize?: number;
+  // SQLite-backed persistent index. Enabled by default (at DEFAULT_DB_PATH).
+  // Pass `false` for the legacy in-memory path (no native dependency, no DB
+  // file). Pass `{ dbPath }` to override the database location.
+  persistent?: false | PersistentConfig;
+}
+
 export class ConversationScanner {
   private metadataCache: Map<string, ConversationMeta> = new Map();
   private conversationLRU: LRUCache<string, Conversation>;
@@ -46,18 +68,100 @@ export class ConversationScanner {
   // file at the same content depth. Defaults to the standard tier.
   private lastTier: ContentTier = resolveTier("standard");
 
-  constructor(options?: { metadataCacheSize?: number; conversationCacheSize?: number }) {
+  // null when persistent mode is disabled (legacy in-memory path). Lazily
+  // opened on first use so merely constructing a scanner never touches disk.
+  private readonly dbPath: string | null;
+  private engineInstance: PersistentEngine | null = null;
+
+  constructor(options?: ConversationScannerOptions) {
     this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
+    if (options?.persistent === false) {
+      this.dbPath = null;
+    } else {
+      this.dbPath = options?.persistent?.dbPath ?? defaultDbPath();
+    }
+  }
+
+  private get persistent(): boolean {
+    return this.dbPath !== null;
+  }
+
+  private engine(): PersistentEngine {
+    if (!this.engineInstance) {
+      this.engineInstance = new PersistentEngine(this.dbPath as string);
+    }
+    return this.engineInstance;
+  }
+
+  // Release the SQLite connection. No-op in legacy mode. Safe to call repeatedly.
+  close(): void {
+    this.engineInstance?.close();
+    this.engineInstance = null;
   }
 
   async scan(options: ScanOptions = {}): Promise<ScanResult> {
-    const log = getLogger();
-    const startedAt = Date.now();
     const profiles = await this.resolveProfiles(options.profiles);
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+    this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    const tier = resolveTier(options.tier ?? "standard", options.tiers);
-    this.lastTier = tier;
+    if (this.persistent) {
+      return this.scanPersistent(activeProfiles, options);
+    }
+    return this.scanInMemory(activeProfiles, options);
+  }
+
+  // SQLite-backed scan: (re)index changed files into the DB, then query all
+  // active metas and run the identical filter/sort/view/paginate pipeline as
+  // the in-memory path — guaranteeing an identical ScanResult shape.
+  private async scanPersistent(
+    activeProfiles: Profile[],
+    options: ScanOptions,
+  ): Promise<ScanResult> {
+    const log = getLogger();
+    const startedAt = Date.now();
+    const engine = this.engine();
+
+    const { scanned } = await engine.indexAll(activeProfiles, options);
+    const allMetas = engine.allActive();
+
+    const { conversations, total } = this.finalize(allMetas, options);
+    log.info(
+      { scanned, kept: allMetas.length, filteredTotal: total, elapsedMs: Date.now() - startedAt },
+      "scan: complete (persistent)",
+    );
+    return { conversations, total, scanned };
+  }
+
+  // Apply include/project/account/since filters, sort, view transform, and
+  // pagination. Shared by both backends so results never diverge.
+  private finalize(
+    allMetas: ConversationMeta[],
+    options: ScanOptions,
+  ): { conversations: ScanResult["conversations"]; total: number } {
+    let filtered = allMetas;
+    if (options.include && options.include !== "all") {
+      filtered = applyIncludeFilter(filtered, options.include);
+    }
+    if (options.project) filtered = applyProjectFilter(filtered, options.project);
+    if (options.account) filtered = applyAccountFilter(filtered, options.account);
+    if (options.since) filtered = applySinceFilter(filtered, options.since);
+
+    filtered = applySort(filtered, options.sort ?? "recent");
+    const total = filtered.length;
+    const conversations = this.transformView(filtered, options);
+
+    if (Array.isArray(conversations)) {
+      const limit = options.limit ?? 50;
+      const offset = options.offset ?? 0;
+      return { conversations: applyPagination(conversations, limit, offset).items, total };
+    }
+    return { conversations, total };
+  }
+
+  private async scanInMemory(activeProfiles: Profile[], options: ScanOptions): Promise<ScanResult> {
+    const log = getLogger();
+    const startedAt = Date.now();
+    const tier = this.lastTier;
 
     log.info(
       {
@@ -155,25 +259,7 @@ export class ConversationScanner {
       options.onProgress?.(scanned, totalFiles);
     }
 
-    // Apply filters
-    let filtered = allMetas;
-    if (options.include && options.include !== "all") {
-      filtered = applyIncludeFilter(filtered, options.include);
-    }
-    if (options.project) {
-      filtered = applyProjectFilter(filtered, options.project);
-    }
-    if (options.account) {
-      filtered = applyAccountFilter(filtered, options.account);
-    }
-    if (options.since) {
-      filtered = applySinceFilter(filtered, options.since);
-    }
-
-    filtered = applySort(filtered, options.sort ?? "recent");
-
-    const total = filtered.length;
-    const conversations = this.transformView(filtered, options);
+    const { conversations, total } = this.finalize(allMetas, options);
 
     const elapsedMs = Date.now() - startedAt;
     log.info(
@@ -188,13 +274,6 @@ export class ConversationScanner {
       "scan: complete",
     );
 
-    if (Array.isArray(conversations)) {
-      const limit = options.limit ?? 50;
-      const offset = options.offset ?? 0;
-      const paginated = applyPagination(conversations, limit, offset);
-      return { conversations: paginated.items, total, scanned };
-    }
-
     return { conversations, total, scanned };
   }
 
@@ -202,7 +281,22 @@ export class ConversationScanner {
     const log = getLogger();
     log.debug({ query, indexSize: this.indexer.getDocumentCount() }, "search: start");
 
-    if (this.indexer.getDocumentCount() === 0) {
+    if (this.persistent) {
+      // Phase 2: reuse FlexSearch as the query engine, sourcing documents from
+      // SQLite. Mirror the in-memory contract: only run a (re)index when the DB
+      // is empty — otherwise just warm the FlexSearch index from the rows
+      // already persisted (e.g. by a prior scan()/refreshFile()). This keeps a
+      // bare search() from rescanning the whole history on every call. (FTS5
+      // replaces this warm step in Phase 4.)
+      const engine = this.engine();
+      if (engine.conversations.count() === 0) {
+        log.debug("search: persistent index empty, triggering scan");
+        const profiles = await this.resolveProfiles(options.profiles);
+        const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+        await engine.indexAll(activeProfiles, { ...options, limit: undefined, offset: undefined });
+      }
+      this.indexer.buildIndex(engine.allActive());
+    } else if (this.indexer.getDocumentCount() === 0) {
       log.debug("search: index empty, triggering scan");
       await this.scan({ ...options, limit: undefined, offset: undefined });
     }
@@ -260,7 +354,9 @@ export class ConversationScanner {
       return cached;
     }
 
-    const meta = this.metadataCache.get(id) ?? this.sessionIdIndex.get(id);
+    const meta = this.persistent
+      ? this.engine().getByIdOrSession(id)
+      : (this.metadataCache.get(id) ?? this.sessionIdIndex.get(id));
     if (!meta) {
       log.debug({ id }, "getConversation: not found in metadata");
       return null;
@@ -356,6 +452,30 @@ export class ConversationScanner {
   // dropped from all indexes.
   async refreshFile(filePath: string, account?: string): Promise<ConversationMeta | null> {
     const log = getLogger();
+
+    if (this.persistent) {
+      const engine = this.engine();
+      const previous = engine.getByIdOrSession(filePath);
+      const resolvedAccount = account ?? previous?.account ?? "default";
+      const evict = (m: ConversationMeta | null) => {
+        if (!m) return;
+        this.conversationLRU.delete(m.id);
+        this.conversationLRU.delete(m.sessionId);
+      };
+      evict(previous);
+      const meta = await engine.indexFile(
+        filePath,
+        resolvedAccount,
+        this.lastTier.name,
+        undefined,
+        readGitBranch,
+        true,
+      );
+      evict(meta);
+      log.debug({ filePath, kept: !!meta }, "refreshFile: updated persistent index");
+      return meta;
+    }
+
     const previous = this.metadataCache.get(filePath);
     const resolvedAccount = account ?? previous?.account ?? "default";
 
@@ -411,12 +531,30 @@ export class ConversationScanner {
   }
 
   getMetadataCache(): Map<string, ConversationMeta> {
+    if (this.persistent) {
+      const map = new Map<string, ConversationMeta>();
+      for (const meta of this.engine().allActive()) map.set(meta.id, meta);
+      return map;
+    }
     return this.metadataCache;
   }
 
+  // Collision-safe sessionId lookup. session_id is NOT unique (the parser falls
+  // back to the file basename, and resumed/subagent sessions repeat ids), so
+  // getConversation(sessionId) is a convenience that resolves to one match;
+  // this returns every active conversation sharing the id, newest first.
+  getConversationsBySessionId(sessionId: string): ConversationMeta[] {
+    if (this.persistent) {
+      return this.engine().getAllBySessionId(sessionId);
+    }
+    const hit = this.sessionIdIndex.get(sessionId);
+    return hit ? [hit] : [];
+  }
+
   getProjects(): string[] {
+    const source = this.persistent ? this.engine().getProjects() : this.projects;
     const normalized = new Set<string>();
-    for (const p of this.projects) {
+    for (const p of source) {
       normalized.add(p.replace(/\/+$/, ""));
     }
     return Array.from(normalized).sort();
