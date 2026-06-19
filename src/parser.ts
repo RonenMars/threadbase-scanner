@@ -1,7 +1,8 @@
 import { createReadStream } from "fs";
-import { basename, dirname, join } from "path";
+import { basename } from "path";
 import { createInterface } from "readline";
 import { getLogger } from "./logger";
+import { finalizeMeta, initialReducerState, reduceLine } from "./persistent/metadata-reducer";
 import { cleanSystemTags } from "./tags";
 import type {
   AttachmentSidecar,
@@ -11,7 +12,6 @@ import type {
   ConversationMeta,
   MessageMetadata,
   MessageSender,
-  MessageSnapshot,
   TeamInfo,
   ToolResultBlock,
   ToolUseBlock,
@@ -25,157 +25,41 @@ export async function parseMeta(
 ): Promise<ConversationMeta | null> {
   const log = getLogger();
   log.trace({ filePath, account, tier: tier.name }, "parseMeta: start");
-  let sessionId = "";
-  let badJsonLines = 0;
-  let sessionName = "";
-  let latestTimestamp = "";
-  let cwd = "";
-  let teamName = "";
-  let model: string | null = null;
-  let messageCount = 0;
-  let lastMessageSender: MessageSender = "user";
-  let isTeammate = false;
-  let firstUserSeen = false;
-  let firstMessage: MessageSnapshot | null = null;
-  let lastMessage: MessageSnapshot | null = null;
-  let lastPrompt = "";
-  const toolNameSet = new Set<string>();
-  const previewParts: string[] = [];
-  const snippetParts: string[] = [];
-  let snippetLength = 0;
-  let previewLength = 0;
 
+  // Stream the whole file through the same per-line fold the incremental
+  // indexer uses, so a full parse and an append-then-resume produce identical
+  // metadata by construction.
+  const state = initialReducerState();
   const fileStream = createReadStream(filePath);
   const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
 
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
-
       let entry: Record<string, unknown>;
       try {
         entry = JSON.parse(line);
       } catch {
-        badJsonLines++;
+        state.badJsonLines++;
         continue;
       }
-
-      if (entry.cwd && !cwd) cwd = entry.cwd as string;
-      if (entry.sessionId && !sessionId) sessionId = entry.sessionId as string;
-      if (entry.slug && !sessionName) sessionName = entry.slug as string;
-      if (entry.teamName && !teamName) teamName = entry.teamName as string;
-      if (entry.timestamp) {
-        const ts = entry.timestamp as string;
-        if (!latestTimestamp || ts > latestTimestamp) latestTimestamp = ts;
-      }
-
-      const type = entry.type as string;
-
-      if (type === "last-prompt") {
-        if (entry.lastPrompt && !lastPrompt) lastPrompt = entry.lastPrompt as string;
-        continue;
-      }
-
-      // file-history-snapshot entries are intentionally excluded:
-      // they contain file-edit undo state, not conversation content.
-      if (type !== "user" && type !== "assistant") continue;
-      if (entry.isMeta) continue;
-
-      // Extract model from first assistant message
-      if (model === null) {
-        const msg = entry.message as Record<string, unknown> | undefined;
-        if (msg?.model) model = msg.model as string;
-      }
-
-      // Check for teammate in first user message
-      if (type === "user" && !firstUserSeen) {
-        firstUserSeen = true;
-        if (isTeammateContent((entry.message as Record<string, unknown>)?.content)) {
-          isTeammate = true;
-        }
-      }
-
-      // Extract content
-      const msg = entry.message as Record<string, unknown> | undefined;
-      const content = extractTextContent(msg?.content);
-      const hasToolUseResult = type === "user" && entry.toolUseResult != null;
-      const isOnlyToolResult = hasToolUseResult && isOnlyToolResultContent(msg?.content);
-
-      // Collect tool names
-      collectToolNames(msg?.content, toolNameSet);
-
-      if (content || isOnlyToolResult) {
-        messageCount++;
-        lastMessageSender = type as MessageSender;
-
-        if (content) {
-          const ts = (entry.timestamp as string) || "";
-          if (!firstMessage) {
-            firstMessage = { text: content.slice(0, 200), timestamp: ts };
-          }
-          lastMessage = { text: content.slice(0, 200), timestamp: ts };
-
-          if (previewLength < tier.previewMax) {
-            previewParts.push(content);
-            previewLength += content.length;
-          }
-          if (snippetLength < tier.snippetMax) {
-            const remaining = tier.snippetMax - snippetLength;
-            const chunk = content.length > remaining ? content.slice(0, remaining) : content;
-            snippetParts.push(chunk);
-            snippetLength += chunk.length;
-          }
-        }
-      }
+      reduceLine(state, entry, tier);
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseMeta: read failed");
     return null;
   }
 
-  if (badJsonLines > 0) {
-    log.warn({ filePath, badJsonLines }, "parseMeta: skipped malformed JSON lines");
+  if (state.badJsonLines > 0) {
+    log.warn(
+      { filePath, badJsonLines: state.badJsonLines },
+      "parseMeta: skipped malformed JSON lines",
+    );
   }
 
-  if (messageCount === 0) {
-    log.trace({ filePath }, "parseMeta: no messages");
-    return null;
-  }
-
-  const isSubagent = filePath.includes("/subagents/");
-  let parentSessionId: string | null = null;
-  if (isSubagent) {
-    const uuidDir = dirname(dirname(filePath));
-    parentSessionId = join(dirname(uuidDir), `${basename(uuidDir)}.jsonl`);
-  }
-
-  const projectPath = cwd;
-  const preview = previewParts.join(" ").slice(0, tier.previewMax);
-
-  return {
-    id: filePath,
-    filePath,
-    sessionId: sessionId || basename(filePath, ".jsonl"),
-    sessionName,
-    projectPath,
-    projectName: getShortProjectName(projectPath),
-    account,
-    timestamp: latestTimestamp || new Date().toISOString(),
-    messageCount,
-    lastMessageSender,
-    preview,
-    contentSnippet: snippetParts.join(" "),
-    gitBranch: null,
-    model,
-    isSubagent,
-    parentSessionId,
-    isTeammate,
-    teamName: teamName || null,
-    toolNames: Array.from(toolNameSet),
-    firstMessage,
-    lastMessage,
-    lastPrompt: lastPrompt || undefined,
-  };
+  const meta = finalizeMeta(state, filePath, account, tier);
+  if (!meta) log.trace({ filePath }, "parseMeta: no messages");
+  return meta;
 }
 
 export async function parseConversation(
@@ -368,7 +252,7 @@ export async function parseConversation(
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-function extractTextContent(content: unknown): string {
+export function extractTextContent(content: unknown): string {
   if (!content) return "";
   if (typeof content === "string") return cleanSystemTags(content);
   if (Array.isArray(content)) {
@@ -437,7 +321,7 @@ function extractToolResultBlocks(
     });
 }
 
-function collectToolNames(content: unknown, toolSet: Set<string>): void {
+export function collectToolNames(content: unknown, toolSet: Set<string>): void {
   if (!Array.isArray(content)) return;
   for (const item of content) {
     if (item?.type === "tool_use" && item?.name) {
@@ -446,12 +330,12 @@ function collectToolNames(content: unknown, toolSet: Set<string>): void {
   }
 }
 
-function isOnlyToolResultContent(content: unknown): boolean {
+export function isOnlyToolResultContent(content: unknown): boolean {
   if (!Array.isArray(content)) return false;
   return content.length > 0 && content.every((item) => item?.type === "tool_result");
 }
 
-function isTeammateContent(content: unknown): boolean {
+export function isTeammateContent(content: unknown): boolean {
   const raw =
     typeof content === "string"
       ? content
