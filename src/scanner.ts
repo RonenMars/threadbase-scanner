@@ -1,3 +1,4 @@
+import { EventEmitter } from "events";
 import { statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -36,6 +37,8 @@ import type {
   SingleFilePage,
   TreeConversation,
 } from "./types";
+import { FileWatcher } from "./watcher/file-watcher";
+import { type IndexJob, IndexQueue } from "./watcher/index-queue";
 
 const BATCH_SIZE = 12;
 const DEFAULT_CONFIG_PATH = "~/.config/threadbase-scanner";
@@ -59,6 +62,24 @@ export interface ConversationScannerOptions {
   persistent?: false | PersistentConfig;
 }
 
+export interface WatchOptions {
+  profiles?: Profile[];
+  // Watcher debounce window (ms). Default 400.
+  debounceMs?: number;
+  // Periodic full rescan as a correctness fallback for missed FS events.
+  // Default 60_000ms; set 0 to disable.
+  periodicMs?: number;
+}
+
+// Emitted after the index changes for one file. `meta` is the fresh metadata,
+// or null when the file was removed/emptied (deleted from the index).
+export interface ScannerChangeEvent {
+  filePath: string;
+  account: string;
+  meta: ConversationMeta | null;
+  reason: IndexJob["reason"];
+}
+
 export class ConversationScanner {
   private metadataCache: Map<string, ConversationMeta> = new Map();
   private conversationLRU: LRUCache<string, Conversation>;
@@ -73,6 +94,11 @@ export class ConversationScanner {
   // opened on first use so merely constructing a scanner never touches disk.
   private readonly dbPath: string | null;
   private engineInstance: PersistentEngine | null = null;
+
+  private emitter = new EventEmitter();
+  private watcher: FileWatcher | null = null;
+  private queue: IndexQueue | null = null;
+  private periodicTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options?: ConversationScannerOptions) {
     this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
@@ -94,8 +120,11 @@ export class ConversationScanner {
     return this.engineInstance;
   }
 
-  // Release the SQLite connection. No-op in legacy mode. Safe to call repeatedly.
+  // Release the SQLite connection. No-op in legacy mode. Safe to call
+  // repeatedly. Stops the watcher first if one is running; call unwatch()
+  // explicitly beforehand if you need to await watcher teardown.
   close(): void {
+    if (this.watcher || this.queue || this.periodicTimer) void this.unwatch();
     this.engineInstance?.close();
     this.engineInstance = null;
   }
@@ -565,6 +594,96 @@ export class ConversationScanner {
       normalized.add(p.replace(/\/+$/, ""));
     }
     return Array.from(normalized).sort();
+  }
+
+  // ── File watching (persistent mode only) ────────────────────────────────
+
+  // Subscribe to index changes. Events: "change" → ScannerChangeEvent,
+  // "error" → Error. Returns this for chaining.
+  on(event: "change", listener: (e: ScannerChangeEvent) => void): this;
+  on(event: "error", listener: (err: Error) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this {
+    this.emitter.on(event, listener);
+    return this;
+  }
+
+  off(event: string, listener: (...args: any[]) => void): this {
+    this.emitter.off(event, listener);
+    return this;
+  }
+
+  // Start watching the active profiles' project dirs. A filesystem watcher
+  // feeds debounced, path-deduplicated index jobs through a single-writer
+  // queue; a periodic full rescan backstops any events the watcher misses
+  // (sleep/wake, network FS, restarts). Emits "change" per indexed file.
+  // Persistent mode only — throws in legacy mode (no durable index to update).
+  async watch(options: WatchOptions = {}): Promise<void> {
+    if (!this.persistent) {
+      throw new Error("watch() requires persistent mode; construct with persistent enabled");
+    }
+    if (this.watcher) return; // already watching
+
+    const profiles = await this.resolveProfiles(options.profiles);
+    const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+
+    this.queue = new IndexQueue(async (job) => {
+      try {
+        // Create/change and delete both route through refreshFile: a removed
+        // file stat-fails or parses empty, so refreshFile drops its row and
+        // returns null. The index stays correct either way.
+        const meta = await this.refreshFile(job.filePath, job.account);
+        this.emitter.emit("change", {
+          filePath: job.filePath,
+          account: job.account,
+          meta,
+          reason: job.reason,
+        } satisfies ScannerChangeEvent);
+      } catch (err) {
+        this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+
+    this.watcher = new FileWatcher(
+      activeProfiles,
+      (e) => {
+        this.queue?.enqueue({
+          filePath: e.filePath,
+          account: e.account,
+          reason: "watcher",
+        });
+      },
+      { debounceMs: options.debounceMs },
+    );
+    await this.watcher.start();
+
+    const periodicMs = options.periodicMs ?? 60_000;
+    if (periodicMs > 0) {
+      this.periodicTimer = setInterval(() => {
+        void this.scan({ profiles: activeProfiles, limit: undefined, offset: undefined }).catch(
+          (err) => this.emitter.emit("error", err instanceof Error ? err : new Error(String(err))),
+        );
+      }, periodicMs);
+      // Don't keep the process alive solely for the rescan timer.
+      this.periodicTimer.unref?.();
+    }
+
+    getLogger().info({ profiles: activeProfiles.length, periodicMs }, "watch: started");
+  }
+
+  // Stop watching and drain any in-flight index jobs.
+  async unwatch(): Promise<void> {
+    if (this.periodicTimer) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
+    }
+    if (this.watcher) {
+      await this.watcher.stop();
+      this.watcher = null;
+    }
+    if (this.queue) {
+      await this.queue.onIdle();
+      this.queue = null;
+    }
   }
 
   private async resolveProfiles(profiles?: Profile[]): Promise<Profile[]> {

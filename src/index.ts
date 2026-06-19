@@ -17,6 +17,12 @@ export {
   resolveConfigDir,
   saveProfiles,
 } from "./profiles";
+export type {
+  ConversationScannerOptions,
+  PersistentConfig,
+  ScannerChangeEvent,
+  WatchOptions,
+} from "./scanner";
 export { ConversationScanner } from "./scanner";
 export { cleanSystemTags } from "./tags";
 export { DEFAULT_TIERS, resolveTier } from "./tiers";
