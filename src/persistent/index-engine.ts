@@ -11,6 +11,7 @@ import { finalizeMeta, initialReducerState, type ReducerState } from "./metadata
 import { ConversationFilesRepo } from "./repositories/conversation-files.repo";
 import { ConversationsRepo } from "./repositories/conversations.repo";
 import { FtsRepo } from "./repositories/fts.repo";
+import { buildSidecar, writeSidecar } from "./sidecar";
 
 const BATCH_SIZE = 12;
 
@@ -28,12 +29,16 @@ export class PersistentEngine {
   readonly files: ConversationFilesRepo;
   readonly conversations: ConversationsRepo;
   readonly fts: FtsRepo;
+  // When true, write a portable <file>.idx.json sidecar next to each indexed
+  // JSONL. Off by default.
+  private readonly sidecar: boolean;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: { sidecar?: boolean } = {}) {
     this.db = openDatabase(dbPath);
     this.files = new ConversationFilesRepo(this.db);
     this.conversations = new ConversationsRepo(this.db);
     this.fts = new FtsRepo(this.db);
+    this.sidecar = options.sidecar ?? false;
   }
 
   close(): void {
@@ -83,6 +88,14 @@ export class PersistentEngine {
       if (kept.length > 0) options.onBatch?.(kept);
       scanned += batch.length;
       options.onProgress?.(scanned, discovered.length);
+    }
+
+    // Reconcile deletions: any previously-active file that wasn't discovered
+    // this pass is gone from disk — mark it deleted. This is the correctness
+    // backstop for unlink events the watcher may have missed (spec §9.5).
+    const seen = new Set(discovered.map((d) => d.filePath));
+    for (const path of this.files.allActivePaths()) {
+      if (!seen.has(path)) this.markDeleted(path);
     }
 
     log.info({ scanned, indexed: this.conversations.count() }, "persistent: indexAll complete");
@@ -162,6 +175,22 @@ export class PersistentEngine {
       });
     });
     upsert();
+
+    if (this.sidecar) {
+      writeSidecar(
+        filePath,
+        buildSidecar(
+          meta,
+          {
+            sizeBytes: stat.size,
+            mtimeMs: stat.mtimeMs,
+            offset: result.newOffset,
+            line: result.newLine,
+          },
+          new Date().toISOString(),
+        ),
+      );
+    }
 
     log.debug(
       { filePath, change, bytesRead: result.newOffset - startOffset, msgs: meta.messageCount },

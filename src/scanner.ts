@@ -17,6 +17,7 @@ import { readGitBranch } from "./git";
 import { SearchIndexer } from "./indexer";
 import { getLogger } from "./logger";
 import { parseConversation, parseMeta } from "./parser";
+import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { generateMatches } from "./search-matches";
@@ -51,6 +52,9 @@ function defaultDbPath(): string {
 
 export interface PersistentConfig {
   dbPath?: string;
+  // Write a portable <file>.idx.json sidecar next to each indexed JSONL for
+  // debugging/portability/recovery. Off by default. SQLite stays canonical.
+  sidecar?: boolean;
 }
 
 export interface ConversationScannerOptions {
@@ -93,6 +97,7 @@ export class ConversationScanner {
   // null when persistent mode is disabled (legacy in-memory path). Lazily
   // opened on first use so merely constructing a scanner never touches disk.
   private readonly dbPath: string | null;
+  private readonly sidecarEnabled: boolean;
   private engineInstance: PersistentEngine | null = null;
 
   private emitter = new EventEmitter();
@@ -104,8 +109,10 @@ export class ConversationScanner {
     this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
     if (options?.persistent === false) {
       this.dbPath = null;
+      this.sidecarEnabled = false;
     } else {
       this.dbPath = options?.persistent?.dbPath ?? defaultDbPath();
+      this.sidecarEnabled = options?.persistent?.sidecar ?? false;
     }
   }
 
@@ -115,7 +122,9 @@ export class ConversationScanner {
 
   private engine(): PersistentEngine {
     if (!this.engineInstance) {
-      this.engineInstance = new PersistentEngine(this.dbPath as string);
+      this.engineInstance = new PersistentEngine(this.dbPath as string, {
+        sidecar: this.sidecarEnabled,
+      });
     }
     return this.engineInstance;
   }
@@ -659,15 +668,49 @@ export class ConversationScanner {
     const periodicMs = options.periodicMs ?? 60_000;
     if (periodicMs > 0) {
       this.periodicTimer = setInterval(() => {
-        void this.scan({ profiles: activeProfiles, limit: undefined, offset: undefined }).catch(
-          (err) => this.emitter.emit("error", err instanceof Error ? err : new Error(String(err))),
-        );
+        void this.periodicReconcile(activeProfiles);
       }, periodicMs);
       // Don't keep the process alive solely for the rescan timer.
       this.periodicTimer.unref?.();
     }
 
     getLogger().info({ profiles: activeProfiles.length, periodicMs }, "watch: started");
+  }
+
+  // Periodic correctness backstop: re-discover all files and enqueue them
+  // through the same queue the watcher uses, so any add/change the watcher
+  // missed still gets indexed and emits a "change" event. Vanished files
+  // (active in the DB but no longer on disk) are enqueued too — refreshFile
+  // drops them. Routing through the queue (not a direct scan) keeps event
+  // emission and single-writer serialization unified.
+  private async periodicReconcile(activeProfiles: Profile[]): Promise<void> {
+    if (!this.queue) return;
+    try {
+      const engine = this.engine();
+      const configDirs = activeProfiles.map((p) => ({
+        projectsDir: getProjectsDir(p),
+        account: p.id,
+      }));
+      const discovered = await discoverJsonlFiles(configDirs);
+      const seen = new Set<string>();
+      for (const { filePath, account } of discovered) {
+        seen.add(filePath);
+        // Only enqueue genuinely-changed files so an idle tick stays silent
+        // (no spurious "change" events for thousands of unchanged files).
+        const { change } = classify(filePath, engine.files.getByPath(filePath));
+        if (change !== "unchanged") {
+          this.queue.enqueue({ filePath, account, reason: "periodic" });
+        }
+      }
+      // Files in the index but gone from disk → enqueue so refreshFile drops them.
+      for (const path of engine.files.allActivePaths()) {
+        if (!seen.has(path)) {
+          this.queue.enqueue({ filePath: path, account: "default", reason: "periodic" });
+        }
+      }
+    } catch (err) {
+      this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   // Stop watching and drain any in-flight index jobs.
