@@ -37,6 +37,9 @@ export function rowToMeta(row: ConversationRow): ConversationMeta {
   return {
     id: row.source_path,
     filePath: row.source_path,
+    // The SQLite engine only indexes Claude/Threadbase files (Codex runs through
+    // the in-memory path), so every persisted row is a Threadbase conversation.
+    provider: "threadbase",
     sessionId: row.session_id,
     sessionName: row.session_name ?? "",
     projectPath: row.project_path ?? "",

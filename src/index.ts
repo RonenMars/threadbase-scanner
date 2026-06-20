@@ -19,6 +19,13 @@ export {
   resolveConfigDir,
   saveProfiles,
 } from "./profiles";
+export { CodexCliProvider } from "./providers/codex-cli";
+export type {
+  DiscoveredConversationFile,
+  ScannerProvider,
+  ScannerProviderName,
+} from "./providers/provider";
+export { ThreadbaseProvider } from "./providers/threadbase";
 export type {
   ConversationScannerOptions,
   PersistentConfig,

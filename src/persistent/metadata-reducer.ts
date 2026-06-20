@@ -164,6 +164,7 @@ export function finalizeMeta(
   return {
     id: filePath,
     filePath,
+    provider: "threadbase",
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
     sessionName: state.sessionName,
     projectPath,
