@@ -20,6 +20,7 @@ Combines the best parts of four independent scanner implementations (VS Code, El
 - **Filtering** — by project, account, time range, conversation type (conversations/subagents/teammates)
 - **5 sort modes** — recent, oldest, messages-desc, messages-asc, alphabetical
 - **Pagination** — limit/offset on all operations
+- **Multi-provider** — index Threadbase/Claude history and local OpenAI Codex CLI sessions through one normalized pipeline (Codex is opt-in; in-memory path only — see below)
 - **Multi-profile** — scan multiple Claude config directories
 - **LRU caching** — metadata and conversation caches for fast repeated access
 - **Git branch detection** — reads `.git/HEAD` with parent directory walking
@@ -109,6 +110,43 @@ const all = scanner.getConversationsBySessionId('sess-123')
 // Release the SQLite connection when done
 scanner.close()
 ```
+
+### Scanning Codex CLI history (providers)
+
+The scanner can index local **OpenAI Codex CLI** rollout sessions alongside the
+default Threadbase/Claude history, normalizing both into the same
+`ConversationMeta` model. Codex support is **opt-in**: pass `providers` and the
+explicit `codexRoots` to discover under (no home directory is scanned by
+default).
+
+```typescript
+const scanner = new ConversationScanner()
+
+const result = await scanner.scan({
+  providers: ['threadbase', 'codex-cli'],
+  codexRoots: ['~/.codex/sessions'], // expand ~ yourself, or pass an absolute path
+})
+
+// Each meta carries its source provider
+for (const c of result.conversations) {
+  console.log(c.provider) // 'threadbase' | 'codex-cli'
+}
+
+// Search across both, or filter to one provider
+const codexHits = await scanner.search('refactor', { provider: 'codex-cli' })
+```
+
+`codexRoots` entries must be absolute paths — expand `~` before passing them
+(e.g. ``join(homedir(), '.codex/sessions')``). Codex metas also set `kind`
+(`'conversation'` | `'task'`) and `externalSessionId` (the Codex-native session
+id) when available.
+
+> **⚠️ In-memory only (for now).** Codex support runs through the legacy
+> in-memory scan path — the SQLite persistent engine indexes Threadbase/Claude
+> files only. Requesting `codex-cli` (via `providers` or `codexRoots`)
+> automatically routes that scan/search through the in-memory path, even on a
+> scanner constructed in persistent mode. Threadbase-only scans are unaffected
+> and still use SQLite. Persistent-mode Codex indexing is a planned follow-up.
 
 ### Watching for changes (persistent mode)
 
@@ -292,6 +330,9 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `isTeammate` | boolean | VS Code |
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
+| `provider` | `'threadbase' \| 'codex-cli'` | Provider that produced the meta |
+| `kind` | `'conversation' \| 'task'` | Codex (optional) |
+| `externalSessionId` | string | Codex-native session id (optional) |
 
 ## Development
 

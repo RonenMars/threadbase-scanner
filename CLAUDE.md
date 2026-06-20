@@ -27,6 +27,13 @@ Key modules and their responsibilities:
 - `indexer.ts` — FlexSearch document index across all metadata fields (legacy in-memory search)
 - `filters.ts` — immutable sort/filter/pagination (returns new arrays, never mutates)
 - `scanner.ts` — orchestrator/facade. Persistent (SQLite) by default; pass `persistent: false` for the legacy in-memory path
+- `providers/` — `ScannerProvider` abstraction (discover/canParse/reduce/finalize). `ThreadbaseProvider` wraps the shared `metadata-reducer` (no duplication); `CodexCliProvider` parses local OpenAI Codex CLI rollout sessions into the same `ConversationMeta` model
+
+### Providers (`src/providers/`)
+
+Both the Claude/Threadbase format and local Codex CLI history flow through one normalized provider pipeline. Codex is **opt-in** via `scan({ providers: ['threadbase', 'codex-cli'], codexRoots: [...] })` — no home directory is scanned by default; `codexRoots` must be absolute.
+
+**Codex applies to in-memory scanning only.** The SQLite persistent engine indexes Threadbase/Claude files; requesting `codex-cli` (via `providers` or `codexRoots`) auto-routes that scan/search to the in-memory path even on a persistent-mode scanner. Threadbase-only scans still use SQLite. Persistent-mode Codex indexing is a planned follow-up — the reducers are already serializable/offset-resumable to make that integration clean.
 
 ### Persistent engine (`src/persistent/`)
 
