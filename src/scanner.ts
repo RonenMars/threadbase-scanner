@@ -20,6 +20,10 @@ import { parseConversation, parseMeta } from "./parser";
 import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
+import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
+import { parseMetaWithProvider } from "./providers/parse";
+import type { ScannerProvider } from "./providers/provider";
+import { ThreadbaseProvider } from "./providers/threadbase";
 import { generateMatches } from "./search-matches";
 import { resolveTier } from "./tiers";
 import type {
@@ -87,7 +91,10 @@ export interface ScannerChangeEvent {
 export class ConversationScanner {
   private metadataCache: Map<string, ConversationMeta> = new Map();
   private conversationLRU: LRUCache<string, Conversation>;
-  private sessionIdIndex: Map<string, ConversationMeta> = new Map();
+  // session_id is NOT unique, so this maps a sessionId to every active meta that
+  // carries it. Resolution picks deterministically (newest timestamp, then path
+  // ascending) so dropping one file never hides another with the same id.
+  private sessionIdIndex: Map<string, ConversationMeta[]> = new Map();
   private projects: Set<string> = new Set();
   private indexer: SearchIndexer = new SearchIndexer();
   // Tier the most recent scan() ran with, so refreshFile() re-parses a single
@@ -143,7 +150,13 @@ export class ConversationScanner {
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
     this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    if (this.persistent) {
+    // The SQLite engine is Claude/Threadbase-specific. When any non-Threadbase
+    // provider is requested, fall back to the provider-aware in-memory path
+    // (provider support in the persistent engine is a follow-up task).
+    const wantsCodex =
+      options.providers?.includes("codex-cli") || (options.codexRoots?.length ?? 0) > 0;
+
+    if (this.persistent && !wantsCodex) {
       return this.scanPersistent(activeProfiles, options);
     }
     return this.scanInMemory(activeProfiles, options);
@@ -220,12 +233,7 @@ export class ConversationScanner {
     this.projects.clear();
     this.indexer.clear();
 
-    const configDirs = activeProfiles.map((p) => ({
-      projectsDir: getProjectsDir(p),
-      account: p.id,
-    }));
-
-    const files = await discoverJsonlFiles(configDirs);
+    const files = await this.discoverWithProviders(activeProfiles, options);
     const totalFiles = files.length;
     let scanned = 0;
     let parseFailures = 0;
@@ -249,7 +257,7 @@ export class ConversationScanner {
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
-        batch.map(async ({ filePath, account }) => {
+        batch.map(async ({ filePath, account, provider }) => {
           if (statCache) {
             const cached = statCache.get(filePath);
             if (cached) {
@@ -259,19 +267,21 @@ export class ConversationScanner {
                   return cached.meta;
                 }
               } catch {
-                // file disappeared — fall through to parseMeta which will return null
+                // file disappeared — fall through to parse which will return null
               }
             }
           }
           try {
-            const meta = await parseMeta(filePath, account, tier);
-            if (meta) {
+            const meta = await parseMetaWithProvider(provider, filePath, account, tier);
+            // The provider may already know its branch (Codex reads it from
+            // session_meta). Only walk the filesystem when it doesn't.
+            if (meta && meta.gitBranch === null && meta.projectPath) {
               meta.gitBranch = resolveGitBranch(meta.projectPath);
             }
             return meta;
           } catch (err) {
             parseFailures++;
-            log.warn({ filePath, account, err }, "scan: parseMeta threw");
+            log.warn({ filePath, account, provider: provider.name, err }, "scan: parse threw");
             return null;
           }
         }),
@@ -281,7 +291,7 @@ export class ConversationScanner {
       for (const meta of results) {
         if (meta && meta.messageCount > 0) {
           this.metadataCache.set(meta.id, meta);
-          this.sessionIdIndex.set(meta.sessionId, meta);
+          this.addToSessionIndex(meta);
           this.projects.add(meta.projectPath);
           allMetas.push(meta);
           batchMetas.push(meta);
@@ -320,8 +330,15 @@ export class ConversationScanner {
     const log = getLogger();
     log.debug({ query, indexSize: this.indexer.getDocumentCount() }, "search: start");
 
+    // Codex isn't in the SQLite engine yet, so any codex-touching search runs
+    // through the in-memory indexer (populated by the provider-aware scan).
+    const wantsCodex =
+      options.provider === "codex-cli" ||
+      options.providers?.includes("codex-cli") ||
+      (options.codexRoots?.length ?? 0) > 0;
+
     let results: SearchResult[];
-    if (this.persistent) {
+    if (this.persistent && !wantsCodex) {
       // SQLite FTS5 is the persistent search engine. Index once if the DB is
       // empty (mirroring the in-memory "scan on first search" contract), then
       // query FTS directly — no in-memory index to warm.
@@ -376,6 +393,9 @@ export class ConversationScanner {
     if (options.account) {
       results = results.filter((r) => r.meta.account === options.account);
     }
+    if (options.provider) {
+      results = results.filter((r) => (r.meta.provider ?? "threadbase") === options.provider);
+    }
     if (options.since) {
       const cutoff = parseSinceCutoff(options.since);
       results = results.filter((r) => new Date(r.meta.timestamp).getTime() >= cutoff.getTime());
@@ -401,7 +421,7 @@ export class ConversationScanner {
 
     const meta = this.persistent
       ? this.engine().getByIdOrSession(id)
-      : (this.metadataCache.get(id) ?? this.sessionIdIndex.get(id));
+      : (this.metadataCache.get(id) ?? this.resolveSessionId(id));
     if (!meta) {
       log.debug({ id }, "getConversation: not found in metadata");
       return null;
@@ -409,7 +429,10 @@ export class ConversationScanner {
 
     log.debug({ id, filePath: meta.filePath }, "getConversation: cache miss, parsing");
     try {
-      const conversation = await parseConversation(meta.filePath, meta.account);
+      const conversation =
+        meta.provider === "codex-cli"
+          ? await parseCodexConversation(meta.filePath, meta.account)
+          : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
         this.conversationLRU.set(id, conversation);
       }
@@ -551,7 +574,7 @@ export class ConversationScanner {
     if (!meta || meta.messageCount === 0) {
       if (previous) {
         this.metadataCache.delete(previous.id);
-        this.sessionIdIndex.delete(previous.sessionId);
+        this.removeFromSessionIndex(previous);
         this.indexer.removeDocument(previous.id);
       }
       log.debug({ filePath }, "refreshFile: dropped (no parseable messages)");
@@ -560,12 +583,11 @@ export class ConversationScanner {
 
     meta.gitBranch = readGitBranch(meta.projectPath);
 
-    // A re-parse can change the sessionId mapping; clear the old one first.
-    if (previous && previous.sessionId !== meta.sessionId) {
-      this.sessionIdIndex.delete(previous.sessionId);
-    }
+    // A re-parse can change the sessionId mapping; clear the old entry first so
+    // we don't leave this file listed under a stale sessionId.
+    if (previous) this.removeFromSessionIndex(previous);
     this.metadataCache.set(meta.id, meta);
-    this.sessionIdIndex.set(meta.sessionId, meta);
+    this.addToSessionIndex(meta);
     this.projects.add(meta.projectPath);
     if (previous) {
       this.indexer.updateDocument(meta);
@@ -597,8 +619,7 @@ export class ConversationScanner {
     if (this.persistent) {
       return this.engine().getAllBySessionId(sessionId);
     }
-    const hit = this.sessionIdIndex.get(sessionId);
-    return hit ? [hit] : [];
+    return this.sortBySessionPriority(this.sessionIdIndex.get(sessionId) ?? []);
   }
 
   getProjects(): string[] {
@@ -732,6 +753,67 @@ export class ConversationScanner {
       await this.queue.onIdle();
       this.queue = null;
     }
+  }
+
+  // ── Provider plumbing (in-memory path) ──────────────────────────────────
+
+  // Build the flat parse worklist for the enabled providers. Threadbase
+  // discovers under the active profiles' project dirs; Codex discovers under
+  // the explicit codexRoots (opt-in — no default home scan).
+  private async discoverWithProviders(
+    activeProfiles: Profile[],
+    options: ScanOptions,
+  ): Promise<{ filePath: string; account: string; provider: ScannerProvider }[]> {
+    const enabled = options.providers ?? ["threadbase"];
+    const work: { filePath: string; account: string; provider: ScannerProvider }[] = [];
+
+    if (enabled.includes("threadbase")) {
+      const provider = new ThreadbaseProvider();
+      const roots = activeProfiles.map((p) => `${getProjectsDir(p)}\0${p.id}`);
+      for (const f of await provider.discover(roots)) {
+        work.push({ ...f, provider });
+      }
+    }
+    if (enabled.includes("codex-cli") && (options.codexRoots?.length ?? 0) > 0) {
+      const provider = new CodexCliProvider();
+      for (const f of await provider.discover(options.codexRoots as string[])) {
+        work.push({ ...f, provider });
+      }
+    }
+    return work;
+  }
+
+  private addToSessionIndex(meta: ConversationMeta): void {
+    const list = this.sessionIdIndex.get(meta.sessionId);
+    if (list) {
+      // Replace any existing entry for the same file (re-index), else append.
+      const i = list.findIndex((m) => m.id === meta.id);
+      if (i >= 0) list[i] = meta;
+      else list.push(meta);
+    } else {
+      this.sessionIdIndex.set(meta.sessionId, [meta]);
+    }
+  }
+
+  private removeFromSessionIndex(meta: ConversationMeta): void {
+    const list = this.sessionIdIndex.get(meta.sessionId);
+    if (!list) return;
+    const next = list.filter((m) => m.id !== meta.id);
+    if (next.length > 0) this.sessionIdIndex.set(meta.sessionId, next);
+    else this.sessionIdIndex.delete(meta.sessionId);
+  }
+
+  // Deterministic single-result sessionId resolution: newest timestamp first,
+  // tie-broken by absolute path ascending.
+  private resolveSessionId(sessionId: string): ConversationMeta | undefined {
+    return this.sortBySessionPriority(this.sessionIdIndex.get(sessionId) ?? [])[0];
+  }
+
+  private sortBySessionPriority(metas: ConversationMeta[]): ConversationMeta[] {
+    return [...metas].sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
+      return a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : 0;
+    });
   }
 
   private async resolveProfiles(profiles?: Profile[]): Promise<Profile[]> {

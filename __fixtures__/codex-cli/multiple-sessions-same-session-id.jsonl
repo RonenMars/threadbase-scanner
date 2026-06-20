@@ -1,0 +1,3 @@
+{"timestamp":"2026-06-19T11:00:00.000Z","type":"session_meta","payload":{"id":"shared-id-9999","timestamp":"2026-06-19T11:00:00.000Z","cwd":"/Users/dev/projects/alpha","model_provider":"openai"}}
+{"timestamp":"2026-06-19T11:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"This is the older session sharing an id."}]}}
+{"timestamp":"2026-06-19T11:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"older reply"}]}}

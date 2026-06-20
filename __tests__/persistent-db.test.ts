@@ -10,6 +10,7 @@ function sampleMeta(overrides: Partial<ConversationMeta> = {}): ConversationMeta
   return {
     id: "/abs/proj/sess.jsonl",
     filePath: "/abs/proj/sess.jsonl",
+    provider: "threadbase",
     sessionId: "sess-1",
     sessionName: "my-session",
     projectPath: "/abs/proj",

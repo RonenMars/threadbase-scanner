@@ -1,0 +1,9 @@
+{"timestamp":"2026-06-19T10:00:00.000Z","type":"session_meta","payload":{"id":"sess-unknown-0003","timestamp":"2026-06-19T10:00:00.000Z","cwd":"/Users/dev/projects/lab","model_provider":"openai"}}
+{"timestamp":"2026-06-19T10:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-06-19T10:00:02.000Z","type":"some_future_event","payload":{"type":"galaxy_brain","weird":{"deeply":"nested"}}}
+{"timestamp":"2026-06-19T10:00:03.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions>sandbox boilerplate</permissions>"}]}}
+not even json at all {{{
+{"timestamp":"2026-06-19T10:00:04.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Does this still parse?"}]}}
+{"timestamp":"2026-06-19T10:00:05.000Z","type":"response_item","payload":{"type":"unknown_block","role":"assistant","content":"raw string not array"}}
+{"timestamp":"2026-06-19T10:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Yes, unknown events were ignored safely."}]}}
+{"timestamp":"2026-06-19T10:00:07.000Z","type":"response_item","payload":42}
