@@ -2,9 +2,13 @@ import { discoverJsonlFiles } from "../discovery";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
-import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
+import { CodexCliProvider } from "../providers/codex-cli";
 import { parseMetaWithProvider } from "../providers/parse";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ScannerProvider } from "../providers/provider";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  type ScannerProvider,
+} from "../providers/provider";
 import { resolveTier } from "../tiers";
 import type {
   ConversationMeta,
@@ -66,36 +70,26 @@ export class PersistentEngine {
     const tier = resolveTier(options.tier ?? "standard", options.tiers);
 
     const enabled = options.providers ?? [CLAUDE_CODE_PROVIDER];
-    log.info({ enabled, activeProfiles: activeProfiles.length, codexRoots: options.codexRoots }, "indexAll: started");
 
-    // Each discovered file carries the provider that should parse it. Threadbase
+    // Each discovered file carries the provider that should parse it. claude-code
     // files fold through the byte-offset-resumable tail reader; Codex files
     // (opt-in, only under explicit codexRoots) reparse from offset 0.
     const discovered: { filePath: string; account: string; provider?: ScannerProvider }[] = [];
 
     if (enabled.includes(CLAUDE_CODE_PROVIDER)) {
-      log.info({ profileCount: activeProfiles.length }, "indexAll: discovering threadbase files");
       const configDirs = activeProfiles.map((p) => ({
         projectsDir: getProjectsDir(p),
         account: p.id,
       }));
       for (const f of await discoverJsonlFiles(configDirs)) discovered.push(f);
-      log.info({ threadbaseFiles: discovered.length }, "indexAll: threadbase discovery complete");
-    } else {
-      log.info({}, "indexAll: threadbase provider not in enabled list, skipping");
     }
 
     const codex = new CodexCliProvider();
     if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
-      log.info({ codexRoots: options.codexRoots }, "indexAll: discovering codex files");
       for (const f of await codex.discover(options.codexRoots as string[])) {
         discovered.push({ ...f, provider: codex });
       }
-      log.info({ totalAfterCodex: discovered.length }, "indexAll: codex discovery complete");
-    } else {
-      log.info({ codexEnabled: enabled.includes(CODEX_CLI_PROVIDER), codexRootsLen: options.codexRoots?.length ?? 0 }, "indexAll: codex provider skipped");
     }
-    log.info({ totalDiscovered: discovered.length }, "indexAll: discovery complete, starting index loop");
     let scanned = 0;
 
     const gitBranchMemo = new Map<string, string | null>();
@@ -130,7 +124,6 @@ export class PersistentEngine {
       options.onProgress?.(scanned, discovered.length);
     }
 
-    log.info({ scanned }, "indexAll: index loop done, reconciling deletions");
     // Reconcile deletions: any previously-active file that wasn't discovered
     // this pass is gone from disk — mark it deleted. This is the correctness
     // backstop for unlink events the watcher may have missed (spec §9.5).
@@ -175,8 +168,8 @@ export class PersistentEngine {
     }
 
     // ponytail: Codex reparses from offset 0 on every change rather than
-    // resuming a byte cursor like Threadbase. Codex rollout sessions are small,
-    // so a full reparse is cheap; the resumable-fold path stays Threadbase-only.
+    // resuming a byte cursor like claude-code. Codex rollout sessions are small,
+    // so a full reparse is cheap; the resumable-fold path stays claude-code-only.
     // Upgrade path if Codex files ever get large: give CodexAccumulator the same
     // serialized-reducer-state treatment and route it through tailReduce.
     if (provider && provider.name !== CLAUDE_CODE_PROVIDER) {
@@ -369,16 +362,6 @@ export class PersistentEngine {
     if (total > CHECKPOINT_INTERVAL && this.checkpoints.count(filePath) === 0) {
       const built = await buildCheckpoints(filePath);
       if (built.length > 0) this.checkpoints.replaceAll(filePath, built);
-    }
-
-    if (meta.provider === "codex-cli") {
-      const conv = await parseCodexConversation(filePath, meta.account ?? "default");
-      if (!conv) return null;
-      const msgs = conv.messages;
-      const t = msgs.length;
-      const beforeIndex = options.beforeIndex ?? t;
-      const fromIndex = Math.max(0, beforeIndex - options.limit);
-      return { messages: msgs.slice(fromIndex, beforeIndex), total: t, fromIndex };
     }
 
     const beforeIndex = options.beforeIndex ?? total;

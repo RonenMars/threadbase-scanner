@@ -22,7 +22,11 @@ import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
 import { parseMetaWithProvider } from "./providers/parse";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ScannerProvider } from "./providers/provider";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  type ScannerProvider,
+} from "./providers/provider";
 import { ThreadbaseProvider } from "./providers/threadbase";
 import { generateMatches } from "./search-matches";
 import { resolveTier } from "./tiers";
@@ -146,19 +150,13 @@ export class ConversationScanner {
   }
 
   async scan(options: ScanOptions = {}): Promise<ScanResult> {
-    const log = getLogger();
-    log.info({ profiles: options.profiles, codexRoots: options.codexRoots, providers: options.providers }, "scan: called");
     const profiles = await this.resolveProfiles(options.profiles);
-    log.info({ resolvedCount: profiles.length }, "scan: profiles resolved");
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
-    log.info({ activeCount: activeProfiles.length, persistent: this.persistent }, "scan: active profiles filtered");
     this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
 
     if (this.persistent) {
-      log.info({ event: "scan.persistent" }, "scan: routing to scanPersistent");
       return this.scanPersistent(activeProfiles, options);
     }
-    log.info({ event: "scan.in_memory" }, "scan: routing to scanInMemory");
     return this.scanInMemory(activeProfiles, options);
   }
 
@@ -171,14 +169,10 @@ export class ConversationScanner {
   ): Promise<ScanResult> {
     const log = getLogger();
     const startedAt = Date.now();
-    log.info({ activeProfiles: activeProfiles.length }, "scanPersistent: started");
     const engine = this.engine();
-    log.info({}, "scanPersistent: engine acquired, calling indexAll");
 
     const { scanned } = await engine.indexAll(activeProfiles, options);
-    log.info({ scanned }, "scanPersistent: indexAll complete");
     const allMetas = engine.allActive();
-    log.info({ metaCount: allMetas.length }, "scanPersistent: allActive retrieved");
 
     const { conversations, total } = this.finalize(allMetas, options);
     log.info(
@@ -391,7 +385,9 @@ export class ConversationScanner {
       results = results.filter((r) => r.meta.account === options.account);
     }
     if (options.provider) {
-      results = results.filter((r) => (r.meta.provider ?? CLAUDE_CODE_PROVIDER) === options.provider);
+      results = results.filter(
+        (r) => (r.meta.provider ?? CLAUDE_CODE_PROVIDER) === options.provider,
+      );
     }
     if (options.since) {
       const cutoff = parseSinceCutoff(options.since);
@@ -427,7 +423,7 @@ export class ConversationScanner {
     log.debug({ id, filePath: meta.filePath }, "getConversation: cache miss, parsing");
     try {
       const conversation =
-        meta.provider === "codex-cli"
+        meta.provider === CODEX_CLI_PROVIDER
           ? await parseCodexConversation(meta.filePath, meta.account)
           : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
@@ -793,7 +789,7 @@ export class ConversationScanner {
     filePath: string,
     previous: ConversationMeta | null,
   ): Promise<ScannerProvider | undefined> {
-    if (previous?.provider === "codex-cli") return new CodexCliProvider();
+    if (previous?.provider === CODEX_CLI_PROVIDER) return new CodexCliProvider();
     if (previous?.provider) return undefined; // known Threadbase
     let sample = "";
     try {

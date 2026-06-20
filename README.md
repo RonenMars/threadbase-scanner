@@ -123,13 +123,13 @@ default).
 const scanner = new ConversationScanner()
 
 const result = await scanner.scan({
-  providers: ['threadbase', 'codex-cli'],
+  providers: ['claude-code', 'codex-cli'],
   codexRoots: ['~/.codex/sessions'], // expand ~ yourself, or pass an absolute path
 })
 
 // Each meta carries its source provider
 for (const c of result.conversations) {
-  console.log(c.provider) // 'threadbase' | 'codex-cli'
+  console.log(c.provider) // 'claude-code' | 'codex-cli'
 }
 
 // Search across both, or filter to one provider
@@ -330,7 +330,7 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `isTeammate` | boolean | VS Code |
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
-| `provider` | `'threadbase' \| 'codex-cli'` | Provider that produced the meta |
+| `provider` | `'claude-code' \| 'codex-cli'` | Provider that produced the meta |
 | `kind` | `'conversation' \| 'task'` | Codex (optional) |
 | `externalSessionId` | string | Codex-native session id (optional) |
 

@@ -6,7 +6,11 @@ import {
   reduceLine,
 } from "../persistent/metadata-reducer";
 import type { ContentTier, ConversationMeta } from "../types";
-import { CLAUDE_CODE_PROVIDER, type DiscoveredConversationFile, type ScannerProvider } from "./provider";
+import {
+  CLAUDE_CODE_PROVIDER,
+  type DiscoveredConversationFile,
+  type ScannerProvider,
+} from "./provider";
 
 // The existing Claude/Threadbase format, expressed as a provider. All behavior
 // is the already-shared reducer (metadata-reducer.ts) — no logic is duplicated
@@ -53,7 +57,7 @@ export class ThreadbaseProvider implements ScannerProvider<ReducerState> {
     account: string,
     tier: ContentTier,
   ): ConversationMeta | null {
-    // finalizeMeta already tags provider: "threadbase".
+    // finalizeMeta already tags provider: "claude-code".
     return finalizeMeta(acc, filePath, account, tier);
   }
 }

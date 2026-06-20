@@ -13,7 +13,11 @@ import type {
   MessageSender,
   MessageSnapshot,
 } from "../types";
-import type { DiscoveredConversationFile, ScannerProvider } from "./provider";
+import {
+  CODEX_CLI_PROVIDER,
+  type DiscoveredConversationFile,
+  type ScannerProvider,
+} from "./provider";
 
 // Serializable fold state for a Codex CLI rollout session. Plain JSON so a
 // future persistent engine can resume it from a byte offset (same contract as
@@ -40,7 +44,7 @@ export interface CodexAccumulator {
 // tree. The Codex provider is opt-in: the scanner only discovers under roots the
 // caller passes explicitly (no default home scan).
 export class CodexCliProvider implements ScannerProvider<CodexAccumulator> {
-  readonly name = "codex-cli" as const;
+  readonly name = CODEX_CLI_PROVIDER;
 
   async discover(roots: string[]): Promise<DiscoveredConversationFile[]> {
     const log = getLogger();
@@ -228,7 +232,7 @@ export function finalizeCodexMeta(
   return {
     id: filePath,
     filePath,
-    provider: "codex-cli",
+    provider: CODEX_CLI_PROVIDER,
     kind,
     externalSessionId: acc.sessionId || undefined,
     sessionId,

@@ -45,8 +45,8 @@ export interface ConversationMeta {
   id: string;
   filePath: string;
   sessionId: string;
-  // Which provider produced this meta. Optional/additive: existing Threadbase
-  // metas default to "threadbase" when unset.
+  // Which provider produced this meta. Optional/additive: existing claude-code
+  // metas default to "claude-code" when unset.
   provider?: ProviderName;
   // Distinguishes plain chat conversations from task-oriented logs (Codex).
   kind?: "conversation" | "task";
@@ -92,7 +92,7 @@ export interface FileStatEntry {
 
 export interface ScanOptions {
   profiles?: Profile[];
-  // Providers to scan. Defaults to ["threadbase"]. Including "codex-cli"
+  // Providers to scan. Defaults to ["claude-code"]. Including "codex-cli"
   // requires codexRoots (no default home scan).
   providers?: ProviderName[];
   // Absolute roots to discover Codex CLI history under (e.g. ~/.codex/sessions).

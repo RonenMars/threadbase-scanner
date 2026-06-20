@@ -94,8 +94,8 @@ describe("persistent db scaffolding", () => {
       v1.close();
     }
 
-    // openDatabase runs migrations. The pre-existing row must survive and be
-    // updated to 'claude-code' by the v2→v3 migration.
+    // openDatabase runs migrations. The pre-existing row must survive and gain a
+    // provider updated to 'claude-code' by v2→v3 migration.
     const db = openDatabase(dbPath);
     expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
     const row = db
