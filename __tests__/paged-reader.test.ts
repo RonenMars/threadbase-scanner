@@ -171,7 +171,9 @@ describe("bounded paged reader equivalence", () => {
 
     const dbPath = join(big, "i.db");
     const scanner = new ConversationScanner({ persistent: { dbPath } });
-    await scanner.scan({ profiles: [{ id: "default", label: "T", configDir: big, enabled: true }] });
+    await scanner.scan({
+      profiles: [{ id: "default", label: "T", configDir: big, enabled: true }],
+    });
 
     // A window near the end must match the full parse exactly.
     const page = await scanner.getConversationPage("big", { beforeIndex: total, limit: 25 });
