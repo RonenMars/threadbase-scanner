@@ -9,12 +9,16 @@ runs:
         node-version: 20
         cache: npm
 
+    # Cache key includes the Node major version: node_modules contains the
+    # native better-sqlite3 binary, which is ABI-specific (NODE_MODULE_VERSION).
+    # A cache built on one Node version is unusable on another, so each version
+    # gets its own cache. This action pre-warms the Node 20 cache.
     - name: Restore node_modules cache
       id: cache
       uses: actions/cache/restore@v4
       with:
         path: node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        key: node-modules-node20-${{ hashFiles('package-lock.json') }}
 
     - name: Install dependencies
       if: steps.cache.outputs.cache-hit != 'true'
@@ -26,4 +30,4 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        key: node-modules-node20-${{ hashFiles('package-lock.json') }}
