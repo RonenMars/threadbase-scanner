@@ -2,6 +2,8 @@ import { basename, dirname, join } from "path";
 import {
   collectToolNames,
   extractTextContent,
+  extractThinking,
+  extractToolUseBlocks,
   isOnlyToolResultContent,
   isTeammateContent,
 } from "../parser";
@@ -20,6 +22,10 @@ export interface ReducerState {
   teamName: string;
   model: string | null;
   messageCount: number;
+  // Count of messages parseConversation() would produce — broader than
+  // messageCount (also counts tool_use-only and thinking-only lines). Used as
+  // the page total for bounded reads, since metadata messageCount differs.
+  pageMessageCount: number;
   lastMessageSender: MessageSender;
   isTeammate: boolean;
   firstUserSeen: boolean;
@@ -49,6 +55,7 @@ export function initialReducerState(): ReducerState {
     firstMessage: null,
     lastMessage: null,
     lastPrompt: "",
+    pageMessageCount: 0,
     toolNames: [],
     previewParts: [],
     snippetParts: [],
@@ -102,6 +109,16 @@ export function reduceLine(
   const toolSet = new Set(state.toolNames);
   collectToolNames(msg?.content, toolSet);
   state.toolNames = Array.from(toolSet);
+
+  // Count messages the same way parseConversation does, so bounded paging has a
+  // correct total. (Broader than messageCount: includes tool_use-only and
+  // thinking-only lines.)
+  const toolUseBlocks = extractToolUseBlocks(msg?.content);
+  const thinking = type === "assistant" ? extractThinking(msg?.content) : null;
+  const hasThinking = !!(thinking?.content || thinking?.signature);
+  if (content || isOnlyToolResult || toolUseBlocks.length > 0 || hasThinking) {
+    state.pageMessageCount++;
+  }
 
   if (content || isOnlyToolResult) {
     state.messageCount++;

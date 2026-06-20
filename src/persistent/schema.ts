@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS conversations (
   content_snippet TEXT,
 
   message_count INTEGER NOT NULL DEFAULT 0,
+  -- Count of messages parseConversation() produces (broader than message_count;
+  -- includes tool_use-only and thinking-only lines). The total for bounded paging.
+  page_message_count INTEGER NOT NULL DEFAULT 0,
   last_message_sender TEXT NOT NULL DEFAULT 'user',
   timestamp TEXT,
 
@@ -118,4 +121,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversation_messages_fts USING fts5(
   tool_names,
   tokenize = 'unicode61'
 );
+
+-- Seek index for large conversations: every N messages, record the byte offset
+-- where the next message's line begins plus the parser's cross-line state
+-- (pending tool_use blocks, team info) needed to resume an equivalent parse
+-- from that point. Lets getConversationPage() read a window near the end of a
+-- huge file without parsing from byte 0.
+CREATE TABLE IF NOT EXISTS message_checkpoints (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_path TEXT NOT NULL,
+  message_index INTEGER NOT NULL,
+  byte_offset INTEGER NOT NULL,
+  line_number INTEGER NOT NULL,
+  parser_state TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_checkpoints_lookup
+  ON message_checkpoints(source_path, message_index);
 `;

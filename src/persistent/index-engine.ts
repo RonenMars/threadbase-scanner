@@ -3,11 +3,19 @@ import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
 import { resolveTier } from "../tiers";
-import type { ConversationMeta, Profile, ScanOptions } from "../types";
+import type {
+  ConversationMeta,
+  ConversationPage,
+  GetConversationPageOptions,
+  Profile,
+  ScanOptions,
+} from "../types";
 import { classify, fingerprint } from "./cursor";
 import { type DB, openDatabase } from "./db";
 import { type TailReadResult, tailReduce } from "./jsonl-tail-reader";
 import { finalizeMeta, initialReducerState, type ReducerState } from "./metadata-reducer";
+import { buildCheckpoints, CHECKPOINT_INTERVAL, readPage } from "./paged-reader";
+import { CheckpointsRepo } from "./repositories/checkpoints.repo";
 import { ConversationFilesRepo } from "./repositories/conversation-files.repo";
 import { ConversationsRepo } from "./repositories/conversations.repo";
 import { FtsRepo } from "./repositories/fts.repo";
@@ -29,6 +37,7 @@ export class PersistentEngine {
   readonly files: ConversationFilesRepo;
   readonly conversations: ConversationsRepo;
   readonly fts: FtsRepo;
+  readonly checkpoints: CheckpointsRepo;
   // When true, write a portable <file>.idx.json sidecar next to each indexed
   // JSONL. Off by default.
   private readonly sidecar: boolean;
@@ -38,6 +47,7 @@ export class PersistentEngine {
     this.files = new ConversationFilesRepo(this.db);
     this.conversations = new ConversationsRepo(this.db);
     this.fts = new FtsRepo(this.db);
+    this.checkpoints = new CheckpointsRepo(this.db);
     this.sidecar = options.sidecar ?? false;
   }
 
@@ -160,8 +170,11 @@ export class PersistentEngine {
     const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
     const fileId = this.files.ensure(filePath, account);
     const upsert = this.db.transaction(() => {
-      this.conversations.upsert(fileId, meta);
+      this.conversations.upsert(fileId, meta, state.pageMessageCount);
       this.fts.upsert(meta);
+      // Byte offsets shift when the file changes, so any checkpoints are stale.
+      // Drop them; they're rebuilt lazily on the next page request.
+      this.checkpoints.remove(filePath);
       this.files.updateCursor(fileId, {
         sizeBytes: stat.size,
         mtimeMs: stat.mtimeMs,
@@ -205,6 +218,7 @@ export class PersistentEngine {
     const tx = this.db.transaction(() => {
       this.conversations.deleteByFileId(existing.id);
       this.fts.remove(filePath);
+      this.checkpoints.remove(filePath);
       this.files.setStatus(existing.id, "deleted");
     });
     tx();
@@ -242,5 +256,30 @@ export class PersistentEngine {
 
   getProjects(): string[] {
     return this.conversations.distinctProjects();
+  }
+
+  // Bounded conversation page: read only the requested window from the file,
+  // seeking from the nearest checkpoint. Returns null if the id can't be
+  // resolved to an indexed conversation. For conversations large enough to span
+  // a checkpoint interval, checkpoints are built lazily on first access and
+  // reused thereafter. Smaller conversations read from the start (cheap).
+  async getPage(id: string, options: GetConversationPageOptions): Promise<ConversationPage | null> {
+    const meta = this.conversations.getByIdOrSession(id);
+    if (!meta) return null;
+    const filePath = meta.filePath;
+    // Bounded paging uses the parseConversation message total, which differs
+    // from meta.messageCount (the metadata count excludes tool_use-only and
+    // thinking-only lines).
+    const total = this.conversations.pageMessageCount(filePath);
+
+    if (total > CHECKPOINT_INTERVAL && this.checkpoints.count(filePath) === 0) {
+      const built = await buildCheckpoints(filePath);
+      if (built.length > 0) this.checkpoints.replaceAll(filePath, built);
+    }
+
+    const beforeIndex = options.beforeIndex ?? total;
+    const fromIndex = Math.max(0, beforeIndex - options.limit);
+    const floor = this.checkpoints.floor(filePath, fromIndex);
+    return readPage(filePath, total, options, floor);
   }
 }

@@ -2,16 +2,14 @@ import { createReadStream } from "fs";
 import { basename } from "path";
 import { createInterface } from "readline";
 import { getLogger } from "./logger";
+import { applyTeamInfo, initialConvState, reduceConvLine } from "./persistent/conversation-reducer";
 import { finalizeMeta, initialReducerState, reduceLine } from "./persistent/metadata-reducer";
 import { cleanSystemTags } from "./tags";
 import type {
-  AttachmentSidecar,
   ContentTier,
   Conversation,
   ConversationMessage,
   ConversationMeta,
-  MessageMetadata,
-  MessageSender,
   TeamInfo,
   ToolResultBlock,
   ToolUseBlock,
@@ -70,15 +68,13 @@ export async function parseConversation(
   log.trace({ filePath, account }, "parseConversation: start");
   const messages: ConversationMessage[] = [];
   let badJsonLines = 0;
-  let sessionId = "";
-  let sessionName = "";
-  let latestTimestamp = "";
-  let cwd = "";
   const textParts: string[] = [];
-  const pendingToolUses = new Map<string, ToolUseBlock>();
-  const teamInfoMap = new Map<string, TeamInfo>();
   const turnDurations: TurnDuration[] = [];
-  let lastPrompt = "";
+
+  // The message line→message reduction lives in reduceConvLine (shared with the
+  // bounded page reader). turn_duration collection is parseConversation-only
+  // (pages don't need it), so it stays inline here.
+  const state = initialConvState();
 
   const fileStream = createReadStream(filePath);
   const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
@@ -95,116 +91,23 @@ export async function parseConversation(
         continue;
       }
 
-      if (entry.cwd && !cwd) cwd = entry.cwd as string;
-      if (entry.sessionId && !sessionId) sessionId = entry.sessionId as string;
-      if (entry.slug && !sessionName) sessionName = entry.slug as string;
-      if (entry.timestamp) {
-        const ts = entry.timestamp as string;
-        if (!latestTimestamp || ts > latestTimestamp) latestTimestamp = ts;
-      }
-
-      const type = entry.type as string;
-
-      if (type === "last-prompt") {
-        if (entry.lastPrompt && !lastPrompt) lastPrompt = entry.lastPrompt as string;
-        continue;
-      }
-
-      if (type === "system") {
-        if (entry.subtype === "turn_duration" && typeof entry.durationMs === "number") {
-          turnDurations.push({
-            durationMs: entry.durationMs as number,
-            messageCount: (entry.messageCount as number) || 0,
-            uuid: entry.uuid as string | undefined,
-          });
-        }
-        // file-history-snapshot entries are intentionally excluded:
-        // they contain file-edit undo state, not conversation content.
-        // stop_hook_summary and bridge_status are internal housekeeping only.
-        continue;
-      }
-
-      if (type !== "user" && type !== "assistant") continue;
-      if (entry.isMeta) continue;
-
-      const msg = entry.message as Record<string, unknown> | undefined;
-
-      // Track tool_use blocks from assistant messages
-      const toolUseBlocks = extractToolUseBlocks(msg?.content);
-      for (const block of toolUseBlocks) {
-        pendingToolUses.set(block.id, block);
-      }
-
-      const hasToolUseResult = type === "user" && entry.toolUseResult != null;
-      const isToolResultOnly = hasToolUseResult && isOnlyToolResultContent(msg?.content);
-
-      const content = extractTextContent(msg?.content);
-
-      const thinking = type === "assistant" ? extractThinking(msg?.content) : null;
-      const hasThinking = !!(thinking?.content || thinking?.signature);
-
-      if (content || isToolResultOnly || toolUseBlocks.length > 0 || hasThinking) {
-        const metadata: MessageMetadata = {};
-
-        if (msg?.model) metadata.model = msg.model as string;
-        if (msg?.stop_reason !== undefined) metadata.stopReason = msg.stop_reason as string | null;
-        if (entry.gitBranch) metadata.gitBranch = entry.gitBranch as string;
-        if (entry.version) metadata.version = entry.version as string;
-
-        const usage = msg?.usage as Record<string, number> | undefined;
-        if (usage) {
-          if (usage.input_tokens) metadata.inputTokens = usage.input_tokens;
-          if (usage.output_tokens) metadata.outputTokens = usage.output_tokens;
-          if (usage.cache_read_input_tokens)
-            metadata.cacheReadTokens = usage.cache_read_input_tokens;
-          if (usage.cache_creation_input_tokens)
-            metadata.cacheCreationTokens = usage.cache_creation_input_tokens;
-        }
-
-        const toolUseNames = extractToolUseNames(msg?.content);
-        if (toolUseNames.length > 0) metadata.toolUses = toolUseNames;
-        if (toolUseBlocks.length > 0) metadata.toolUseBlocks = toolUseBlocks;
-
-        if (isToolResultOnly) {
-          const toolResultBlocks = extractToolResultBlocks(msg?.content, pendingToolUses);
-          if (toolResultBlocks.length > 0) metadata.toolResults = toolResultBlocks;
-        }
-
-        if (entry.teamName) {
-          metadata.teamName = entry.teamName as string;
-          if (!teamInfoMap.has(metadata.teamName) && content) {
-            const info = parseTeammateMessageTag(content);
-            if (info) teamInfoMap.set(metadata.teamName, info);
-          }
-        }
-
-        const thinkingContent = thinking?.content || undefined;
-        const thinkingSignature = thinking?.signature || undefined;
-
-        const hasMetadata = Object.keys(metadata).length > 0;
-
-        messages.push({
-          role: type as MessageSender,
-          text: content || "",
-          timestamp: (entry.timestamp as string) || "",
-          uuid: (entry.uuid as string) || undefined,
-          metadata: hasMetadata ? metadata : undefined,
-          isToolResult: isToolResultOnly || undefined,
-          isThinking: thinkingContent || thinkingSignature ? true : undefined,
-          thinkingContent,
-          thinkingSignature,
-          parentUuid:
-            entry.parentUuid !== undefined ? (entry.parentUuid as string | null) : undefined,
-          requestId: type === "assistant" ? (entry.requestId as string | undefined) : undefined,
-          promptId: type === "user" ? (entry.promptId as string | undefined) : undefined,
-          isSidechain: typeof entry.isSidechain === "boolean" ? entry.isSidechain : undefined,
-          permissionMode:
-            type === "user" ? (entry.permissionMode as string | undefined) : undefined,
-          hasImages: hasImageBlocks(msg?.content) || undefined,
-          attachment:
-            entry.attachment !== undefined ? (entry.attachment as AttachmentSidecar) : undefined,
+      if (
+        entry.type === "system" &&
+        entry.subtype === "turn_duration" &&
+        typeof entry.durationMs === "number"
+      ) {
+        turnDurations.push({
+          durationMs: entry.durationMs as number,
+          messageCount: (entry.messageCount as number) || 0,
+          uuid: entry.uuid as string | undefined,
         });
-        if (content) textParts.push(content);
+        continue;
+      }
+
+      const message = reduceConvLine(state, entry);
+      if (message) {
+        messages.push(message);
+        if (message.text) textParts.push(message.text);
       }
     }
   } catch (err) {
@@ -222,31 +125,22 @@ export async function parseConversation(
   }
 
   log.debug({ filePath, messageCount: messages.length }, "parseConversation: complete");
-
-  // Apply collected team info to matching messages
-  if (teamInfoMap.size > 0) {
-    for (const msg of messages) {
-      if (msg.metadata?.teamName) {
-        const info = teamInfoMap.get(msg.metadata.teamName);
-        if (info) msg.metadata.teamInfo = info;
-      }
-    }
-  }
+  applyTeamInfo(messages, state);
 
   return {
     id: filePath,
     filePath,
-    projectPath: cwd,
-    projectName: getShortProjectName(cwd),
-    sessionId: sessionId || basename(filePath, ".jsonl"),
-    sessionName,
+    projectPath: state.cwd,
+    projectName: getShortProjectName(state.cwd),
+    sessionId: state.sessionId || basename(filePath, ".jsonl"),
+    sessionName: state.sessionName,
     messages,
     fullText: textParts.join(" "),
-    timestamp: latestTimestamp || new Date().toISOString(),
+    timestamp: state.latestTimestamp || new Date().toISOString(),
     messageCount: messages.length,
     account,
     turnDurations: turnDurations.length > 0 ? turnDurations : undefined,
-    lastPrompt: lastPrompt || undefined,
+    lastPrompt: state.lastPrompt || undefined,
   };
 }
 
@@ -270,14 +164,14 @@ export function extractTextContent(content: unknown): string {
   return "";
 }
 
-function extractToolUseNames(content: unknown): string[] {
+export function extractToolUseNames(content: unknown): string[] {
   if (!Array.isArray(content)) return [];
   return content
     .filter((item) => item?.type === "tool_use" && item?.name)
     .map((item) => item.name as string);
 }
 
-function extractToolUseBlocks(content: unknown): ToolUseBlock[] {
+export function extractToolUseBlocks(content: unknown): ToolUseBlock[] {
   if (!Array.isArray(content)) return [];
   return content
     .filter((item) => item?.type === "tool_use" && item?.name && item?.id)
@@ -300,7 +194,7 @@ const TOOL_NAME_TO_TYPE: Record<string, ToolResultBlock["type"]> = {
   TaskUpdate: "taskUpdate",
 };
 
-function extractToolResultBlocks(
+export function extractToolResultBlocks(
   content: unknown,
   pendingToolUses: Map<string, ToolUseBlock>,
 ): ToolResultBlock[] {
@@ -349,7 +243,7 @@ export function isTeammateContent(content: unknown): boolean {
   return raw.includes("<teammate-message");
 }
 
-function extractThinking(content: unknown): { content: string; signature: string } {
+export function extractThinking(content: unknown): { content: string; signature: string } {
   if (!Array.isArray(content)) return { content: "", signature: "" };
   const blocks = content.filter((item) => item?.type === "thinking");
   return {
@@ -364,7 +258,7 @@ function extractThinking(content: unknown): { content: string; signature: string
   };
 }
 
-function hasImageBlocks(content: unknown): boolean {
+export function hasImageBlocks(content: unknown): boolean {
   if (!Array.isArray(content)) return false;
   return content.some(
     (item) =>
@@ -373,7 +267,7 @@ function hasImageBlocks(content: unknown): boolean {
   );
 }
 
-function parseTeammateMessageTag(content: string): TeamInfo | null {
+export function parseTeammateMessageTag(content: string): TeamInfo | null {
   const match = content.match(/<teammate-message\s+([^>]*)>/);
   if (!match) return null;
   const attrs = match[1];

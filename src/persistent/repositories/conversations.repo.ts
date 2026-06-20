@@ -14,6 +14,7 @@ export interface ConversationRow {
   preview: string | null;
   content_snippet: string | null;
   message_count: number;
+  page_message_count: number;
   last_message_sender: string;
   timestamp: string | null;
   first_sent_at: string | null;
@@ -68,18 +69,20 @@ export class ConversationsRepo {
 
   // Upsert by file_id (1 file = 1 conversation). Keyed on the unique file_id so
   // a re-index overwrites the prior summary in place.
-  upsert(fileId: number, meta: ConversationMeta): void {
+  upsert(fileId: number, meta: ConversationMeta, pageMessageCount = meta.messageCount): void {
     this.db
       .prepare(
         `INSERT INTO conversations (
            file_id, source_path, session_id, session_name, project_path, project_name,
-           account, branch, preview, content_snippet, message_count, last_message_sender,
+           account, branch, preview, content_snippet, message_count, page_message_count,
+           last_message_sender,
            timestamp, index_seq, first_sent_at, first_sent_text, last_sent_at, last_sent_text,
            model, is_subagent, parent_session_id, is_teammate, team_name, tool_names_json,
            last_prompt, status, updated_at
          ) VALUES (
            @file_id, @source_path, @session_id, @session_name, @project_path, @project_name,
-           @account, @branch, @preview, @content_snippet, @message_count, @last_message_sender,
+           @account, @branch, @preview, @content_snippet, @message_count, @page_message_count,
+           @last_message_sender,
            @timestamp,
            (SELECT COALESCE(MAX(index_seq), 0) + 1 FROM conversations),
            @first_sent_at, @first_sent_text, @last_sent_at, @last_sent_text,
@@ -97,6 +100,7 @@ export class ConversationsRepo {
            preview = excluded.preview,
            content_snippet = excluded.content_snippet,
            message_count = excluded.message_count,
+           page_message_count = excluded.page_message_count,
            last_message_sender = excluded.last_message_sender,
            timestamp = excluded.timestamp,
            first_sent_at = excluded.first_sent_at,
@@ -126,6 +130,7 @@ export class ConversationsRepo {
         preview: meta.preview || null,
         content_snippet: meta.contentSnippet || null,
         message_count: meta.messageCount,
+        page_message_count: pageMessageCount,
         last_message_sender: meta.lastMessageSender,
         timestamp: meta.timestamp || null,
         first_sent_at: meta.firstMessage?.timestamp ?? null,
@@ -219,6 +224,17 @@ export class ConversationsRepo {
         "UPDATE conversations SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE file_id = ?",
       )
       .run(fileId);
+  }
+
+  // The parseConversation message total for a file (for bounded paging), or 0
+  // if not indexed.
+  pageMessageCount(sourcePath: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT page_message_count AS n FROM conversations WHERE source_path = ? AND status = 'active'",
+      )
+      .get(sourcePath) as { n: number } | undefined;
+    return row?.n ?? 0;
   }
 
   count(): number {
