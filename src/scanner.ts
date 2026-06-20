@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { statSync } from "fs";
+import { closeSync, openSync, readSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { LRUCache } from "./cache";
@@ -150,13 +150,7 @@ export class ConversationScanner {
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
     this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    // The SQLite engine is Claude/Threadbase-specific. When any non-Threadbase
-    // provider is requested, fall back to the provider-aware in-memory path
-    // (provider support in the persistent engine is a follow-up task).
-    const wantsCodex =
-      options.providers?.includes("codex-cli") || (options.codexRoots?.length ?? 0) > 0;
-
-    if (this.persistent && !wantsCodex) {
+    if (this.persistent) {
       return this.scanPersistent(activeProfiles, options);
     }
     return this.scanInMemory(activeProfiles, options);
@@ -330,15 +324,8 @@ export class ConversationScanner {
     const log = getLogger();
     log.debug({ query, indexSize: this.indexer.getDocumentCount() }, "search: start");
 
-    // Codex isn't in the SQLite engine yet, so any codex-touching search runs
-    // through the in-memory indexer (populated by the provider-aware scan).
-    const wantsCodex =
-      options.provider === "codex-cli" ||
-      options.providers?.includes("codex-cli") ||
-      (options.codexRoots?.length ?? 0) > 0;
-
     let results: SearchResult[];
-    if (this.persistent && !wantsCodex) {
+    if (this.persistent) {
       // SQLite FTS5 is the persistent search engine. Index once if the DB is
       // empty (mirroring the in-memory "scan on first search" contract), then
       // query FTS directly — no in-memory index to warm.
@@ -536,6 +523,10 @@ export class ConversationScanner {
         this.conversationLRU.delete(m.sessionId);
       };
       evict(previous);
+      // Resolve the provider so a Codex file refreshes through the Codex reducer
+      // rather than the Threadbase tail-read. Prefer stored metadata; fall back
+      // to a structural sniff for a file the index hasn't seen yet.
+      const provider = await this.resolveProviderForFile(filePath, previous);
       const meta = await engine.indexFile(
         filePath,
         resolvedAccount,
@@ -543,6 +534,7 @@ export class ConversationScanner {
         undefined,
         readGitBranch,
         true,
+        provider,
       );
       evict(meta);
       log.debug({ filePath, kept: !!meta }, "refreshFile: updated persistent index");
@@ -781,6 +773,34 @@ export class ConversationScanner {
       }
     }
     return work;
+  }
+
+  // Resolve which provider should (re)parse a file. Stored metadata wins; for a
+  // file the index has not seen, sniff the first lines with each non-Threadbase
+  // provider's canParse. Returns undefined for Threadbase (the engine's default
+  // tail-read path).
+  private async resolveProviderForFile(
+    filePath: string,
+    previous: ConversationMeta | null,
+  ): Promise<ScannerProvider | undefined> {
+    if (previous?.provider === "codex-cli") return new CodexCliProvider();
+    if (previous?.provider) return undefined; // known Threadbase
+    let sample = "";
+    try {
+      const fd = openSync(filePath, "r");
+      try {
+        const buf = Buffer.alloc(8192);
+        const n = readSync(fd, buf, 0, buf.length, 0);
+        sample = buf.subarray(0, n).toString("utf8");
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return undefined;
+    }
+    const codex = new CodexCliProvider();
+    if (codex.canParse(filePath, sample)) return codex;
+    return undefined;
   }
 
   private addToSessionIndex(meta: ConversationMeta): void {

@@ -1,8 +1,6 @@
-// NOTE: Codex CLI support currently runs through the in-memory scan path only —
-// the SQLite persistent engine indexes Threadbase/Claude files. The scanner
-// tests below construct with `persistent: false`, and requesting `codex-cli`
-// (via providers/codexRoots) auto-routes to the in-memory path regardless.
-// Persistent-mode Codex indexing is a planned follow-up.
+// These tests cover the in-memory Codex scan path (scanners built with
+// `persistent: false`). Codex is also indexed in the SQLite persistent engine —
+// see persistent-codex.test.ts for that path.
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";

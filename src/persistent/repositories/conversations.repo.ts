@@ -1,10 +1,13 @@
 import type { Database } from "better-sqlite3";
-import type { ConversationMeta, MessageSender } from "../../types";
+import type { ConversationMeta, MessageSender, ProviderName } from "../../types";
 
 export interface ConversationRow {
   id: number;
   file_id: number;
   source_path: string;
+  provider: string;
+  kind: string | null;
+  external_session_id: string | null;
   session_id: string;
   session_name: string | null;
   project_path: string | null;
@@ -37,9 +40,9 @@ export function rowToMeta(row: ConversationRow): ConversationMeta {
   return {
     id: row.source_path,
     filePath: row.source_path,
-    // The SQLite engine only indexes Claude/Threadbase files (Codex runs through
-    // the in-memory path), so every persisted row is a Threadbase conversation.
-    provider: "threadbase",
+    provider: (row.provider as ProviderName) ?? "threadbase",
+    kind: (row.kind as ConversationMeta["kind"]) ?? undefined,
+    externalSessionId: row.external_session_id ?? undefined,
     sessionId: row.session_id,
     sessionName: row.session_name ?? "",
     projectPath: row.project_path ?? "",
@@ -76,14 +79,16 @@ export class ConversationsRepo {
     this.db
       .prepare(
         `INSERT INTO conversations (
-           file_id, source_path, session_id, session_name, project_path, project_name,
+           file_id, source_path, provider, kind, external_session_id,
+           session_id, session_name, project_path, project_name,
            account, branch, preview, content_snippet, message_count, page_message_count,
            last_message_sender,
            timestamp, index_seq, first_sent_at, first_sent_text, last_sent_at, last_sent_text,
            model, is_subagent, parent_session_id, is_teammate, team_name, tool_names_json,
            last_prompt, status, updated_at
          ) VALUES (
-           @file_id, @source_path, @session_id, @session_name, @project_path, @project_name,
+           @file_id, @source_path, @provider, @kind, @external_session_id,
+           @session_id, @session_name, @project_path, @project_name,
            @account, @branch, @preview, @content_snippet, @message_count, @page_message_count,
            @last_message_sender,
            @timestamp,
@@ -94,6 +99,9 @@ export class ConversationsRepo {
          )
          ON CONFLICT(file_id) DO UPDATE SET
            source_path = excluded.source_path,
+           provider = excluded.provider,
+           kind = excluded.kind,
+           external_session_id = excluded.external_session_id,
            session_id = excluded.session_id,
            session_name = excluded.session_name,
            project_path = excluded.project_path,
@@ -124,6 +132,9 @@ export class ConversationsRepo {
       .run({
         file_id: fileId,
         source_path: meta.id,
+        provider: meta.provider ?? "threadbase",
+        kind: meta.kind ?? null,
+        external_session_id: meta.externalSessionId ?? null,
         session_id: meta.sessionId,
         session_name: meta.sessionName || null,
         project_path: meta.projectPath || null,
@@ -161,9 +172,10 @@ export class ConversationsRepo {
   // canonical id) first, then by session_id.
   //
   // session_id is NOT unique (see schema header) — the sessionId form is a
-  // compatibility convenience. Resolution is deterministic: among active rows
-  // sharing the session_id, pick the most recent (latest timestamp, then
-  // updated_at), tie-broken by source_path. Collision-safe callers should use
+  // compatibility convenience. Resolution is deterministic and matches the
+  // in-memory scanner: among active rows sharing the session_id, newest
+  // timestamp wins, index_seq breaks sub-second ties (precision updated_at
+  // lacks), then source_path ascending. Collision-safe callers should use
   // getAllBySessionId() instead.
   getByIdOrSession(id: string): ConversationMeta | null {
     const direct = this.getBySourcePath(id);
@@ -171,19 +183,20 @@ export class ConversationsRepo {
     const row = this.db
       .prepare(
         `SELECT * FROM conversations WHERE session_id = ? AND status = 'active'
-         ORDER BY index_seq DESC, source_path ASC LIMIT 1`,
+         ORDER BY COALESCE(timestamp, '') DESC, index_seq DESC, source_path ASC LIMIT 1`,
       )
       .get(id) as ConversationRow | undefined;
     return row ? rowToMeta(row) : null;
   }
 
-  // All active conversations sharing a session_id, newest first. Collision-safe
-  // counterpart to the convenience getByIdOrSession() sessionId lookup.
+  // All active conversations sharing a session_id, newest first (same ordering
+  // as getByIdOrSession). Collision-safe counterpart to the convenience
+  // getByIdOrSession() sessionId lookup.
   getAllBySessionId(sessionId: string): ConversationMeta[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM conversations WHERE session_id = ? AND status = 'active'
-         ORDER BY index_seq DESC, source_path ASC`,
+         ORDER BY COALESCE(timestamp, '') DESC, index_seq DESC, source_path ASC`,
       )
       .all(sessionId) as ConversationRow[];
     return rows.map(rowToMeta);

@@ -33,7 +33,7 @@ Key modules and their responsibilities:
 
 Both the Claude/Threadbase format and local Codex CLI history flow through one normalized provider pipeline. Codex is **opt-in** via `scan({ providers: ['threadbase', 'codex-cli'], codexRoots: [...] })` — no home directory is scanned by default; `codexRoots` must be absolute.
 
-**Codex applies to in-memory scanning only.** The SQLite persistent engine indexes Threadbase/Claude files; requesting `codex-cli` (via `providers` or `codexRoots`) auto-routes that scan/search to the in-memory path even on a persistent-mode scanner. Threadbase-only scans still use SQLite. Persistent-mode Codex indexing is a planned follow-up — the reducers are already serializable/offset-resumable to make that integration clean.
+**Codex is indexed in both the in-memory and SQLite persistent engines.** A persistent-mode scan/search with `providers: ['codex-cli']` + `codexRoots` discovers Codex files through the `CodexCliProvider`, reduces them via the shared provider pipeline, and upserts them into the same `conversations`/FTS tables as Threadbase. Threadbase files keep the byte-offset-resumable incremental fold; Codex files reparse from offset 0 on each change (rollout sessions are small — see the `ponytail:` note in `index-engine.ts` for the upgrade path). Persisted rows carry a `provider` column (schema v2); canonical identity is `(provider, absolute_path)` and `session_id` stays non-unique, resolved newest-timestamp-first.
 
 ### Persistent engine (`src/persistent/`)
 

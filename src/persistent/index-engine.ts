@@ -2,6 +2,9 @@ import { discoverJsonlFiles } from "../discovery";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
+import { CodexCliProvider } from "../providers/codex-cli";
+import { parseMetaWithProvider } from "../providers/parse";
+import type { ScannerProvider } from "../providers/provider";
 import { resolveTier } from "../tiers";
 import type {
   ConversationMeta,
@@ -62,12 +65,27 @@ export class PersistentEngine {
     const log = getLogger();
     const tier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    const configDirs = activeProfiles.map((p) => ({
-      projectsDir: getProjectsDir(p),
-      account: p.id,
-    }));
+    const enabled = options.providers ?? ["threadbase"];
 
-    const discovered = await discoverJsonlFiles(configDirs);
+    // Each discovered file carries the provider that should parse it. Threadbase
+    // files fold through the byte-offset-resumable tail reader; Codex files
+    // (opt-in, only under explicit codexRoots) reparse from offset 0.
+    const discovered: { filePath: string; account: string; provider?: ScannerProvider }[] = [];
+
+    if (enabled.includes("threadbase")) {
+      const configDirs = activeProfiles.map((p) => ({
+        projectsDir: getProjectsDir(p),
+        account: p.id,
+      }));
+      for (const f of await discoverJsonlFiles(configDirs)) discovered.push(f);
+    }
+
+    const codex = new CodexCliProvider();
+    if (enabled.includes("codex-cli") && (options.codexRoots?.length ?? 0) > 0) {
+      for (const f of await codex.discover(options.codexRoots as string[])) {
+        discovered.push({ ...f, provider: codex });
+      }
+    }
     let scanned = 0;
 
     const gitBranchMemo = new Map<string, string | null>();
@@ -83,13 +101,15 @@ export class PersistentEngine {
     for (let i = 0; i < discovered.length; i += BATCH_SIZE) {
       const batch = discovered.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
-        batch.map(async ({ filePath, account }) => {
+        batch.map(async ({ filePath, account, provider }) => {
           const meta = await this.indexFile(
             filePath,
             account,
             tier.name,
             options.tiers,
             resolveGitBranch,
+            false,
+            provider,
           );
           return meta;
         }),
@@ -124,6 +144,7 @@ export class PersistentEngine {
     customTiers: ScanOptions["tiers"],
     resolveGitBranch: (projectPath: string) => string | null,
     force = false,
+    provider?: ScannerProvider,
   ): Promise<ConversationMeta | null> {
     const log = getLogger();
     const tier = resolveTier(tierName, customTiers);
@@ -140,6 +161,15 @@ export class PersistentEngine {
     // caller forces a re-parse, e.g. refreshFile after a same-size edit).
     if (change === "unchanged" && !force) {
       return this.conversations.getBySourcePath(filePath);
+    }
+
+    // ponytail: Codex reparses from offset 0 on every change rather than
+    // resuming a byte cursor like Threadbase. Codex rollout sessions are small,
+    // so a full reparse is cheap; the resumable-fold path stays Threadbase-only.
+    // Upgrade path if Codex files ever get large: give CodexAccumulator the same
+    // serialized-reducer-state treatment and route it through tailReduce.
+    if (provider && provider.name !== "threadbase") {
+      return this.indexFileWithProvider(provider, filePath, account, tier, stat, resolveGitBranch);
     }
 
     // appended → resume the persisted fold from the cursor; reindex/force →
@@ -208,6 +238,59 @@ export class PersistentEngine {
     log.debug(
       { filePath, change, bytesRead: result.newOffset - startOffset, msgs: meta.messageCount },
       "persistent: indexed file",
+    );
+    return meta;
+  }
+
+  // Index a non-Threadbase provider file: full reparse from offset 0 through the
+  // provider's reducer/finalize, then the same upsert + FTS write + cursor bump
+  // the Threadbase path uses. The cursor records size/mtime (and offset = size)
+  // so the next pass classifies an unchanged file as "unchanged" and skips it;
+  // any change reparses from 0 again. No reducer_state is persisted.
+  private async indexFileWithProvider(
+    provider: ScannerProvider,
+    filePath: string,
+    account: string,
+    tier: ReturnType<typeof resolveTier>,
+    stat: { size: number; mtimeMs: number },
+    resolveGitBranch: (projectPath: string) => string | null,
+  ): Promise<ConversationMeta | null> {
+    const log = getLogger();
+
+    const meta = await parseMetaWithProvider(provider, filePath, account, tier);
+    if (!meta) {
+      this.markDeleted(filePath);
+      return null;
+    }
+    // The provider may already know its branch (Codex reads it from
+    // session_meta). Only walk the filesystem when it doesn't.
+    if (meta.gitBranch === null && meta.projectPath) {
+      meta.gitBranch = resolveGitBranch(meta.projectPath);
+    }
+
+    const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
+    const fileId = this.files.ensure(filePath, account);
+    const upsert = this.db.transaction(() => {
+      this.conversations.upsert(fileId, meta, meta.messageCount);
+      this.fts.upsert(meta);
+      this.checkpoints.remove(filePath);
+      this.files.updateCursor(fileId, {
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+        // offset = size marks the file fully consumed (non-zero so the next pass
+        // can classify it "unchanged"); no resumable reducer state is kept.
+        offset: stat.size,
+        line: 0,
+        reducerState: null,
+        fingerprint: fp,
+        status: "active",
+      });
+    });
+    upsert();
+
+    log.debug(
+      { filePath, provider: provider.name, msgs: meta.messageCount },
+      "persistent: indexed provider file",
     );
     return meta;
   }

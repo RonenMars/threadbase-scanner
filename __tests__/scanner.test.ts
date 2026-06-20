@@ -301,7 +301,10 @@ describe("ConversationScanner", () => {
       const scanner = new ConversationScanner();
       await scanner.scan({ profiles: [profile] });
 
-      const before = await scanner.getConversation("sess-1");
+      // Resolve by the file-path id (the canonical, unambiguous id). sessionId
+      // "sess-1" is shared with session2.jsonl, and resolution is newest-first
+      // by timestamp, so a sessionId lookup would pick the unrelated newer file.
+      const before = await scanner.getConversation(filePath());
       expect(before?.messageCount).toBe(2);
 
       writeFileSync(
@@ -318,7 +321,7 @@ describe("ConversationScanner", () => {
       expect(meta?.messageCount).toBe(4);
 
       // The stale parsed conversation must be evicted so the next read re-parses.
-      const after = await scanner.getConversation("sess-1");
+      const after = await scanner.getConversation(filePath());
       expect(after?.messageCount).toBe(4);
       expect(after?.messages.at(-1)?.text).toContain("the real latest message");
     });

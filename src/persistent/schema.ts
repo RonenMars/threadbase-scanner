@@ -12,7 +12,7 @@
 // file's absolute_path (and conversations.file_id).
 
 // Bumped whenever DDL below changes; drives migrations.ts via PRAGMA user_version.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -52,6 +52,11 @@ CREATE TABLE IF NOT EXISTS conversations (
   file_id INTEGER NOT NULL UNIQUE,
 
   source_path TEXT NOT NULL UNIQUE,
+  -- Which provider produced this row. Canonical identity is (provider,
+  -- source_path); session_id stays non-unique across providers too.
+  provider TEXT NOT NULL DEFAULT 'threadbase',
+  kind TEXT,
+  external_session_id TEXT,
   session_id TEXT NOT NULL,
   session_name TEXT,
 
@@ -98,6 +103,9 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_session_id ON conversations(session_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_provider_session ON conversations(provider, session_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_provider_recent ON conversations(provider, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_provider_project_branch ON conversations(provider, project_path, branch);
 CREATE INDEX IF NOT EXISTS idx_conversations_recent ON conversations(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_project_recent ON conversations(project_path, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_project_branch_recent ON conversations(project_path, branch, timestamp DESC);
