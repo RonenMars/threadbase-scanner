@@ -2,7 +2,7 @@ import { discoverJsonlFiles } from "../discovery";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
-import { CodexCliProvider } from "../providers/codex-cli";
+import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
 import { parseMetaWithProvider } from "../providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
@@ -354,6 +354,23 @@ export class PersistentEngine {
     const meta = this.conversations.getByIdOrSession(id);
     if (!meta) return null;
     const filePath = meta.filePath;
+
+    // Codex files don't fold through the conversation-reducer the bounded reader
+    // (readPage) uses — that reducer only understands the claude-code line shape,
+    // so readPage would return an empty window for a Codex file. Codex rollout
+    // sessions are small (already reparsed from offset 0 on every change), so
+    // parse the whole conversation and slice the window — identical math to the
+    // claude-code path and to the legacy getConversationPage slice.
+    if (meta.provider === CODEX_CLI_PROVIDER) {
+      const conversation = await parseCodexConversation(filePath, meta.account);
+      if (!conversation) return null;
+      const { messages } = conversation;
+      const total = messages.length;
+      const beforeIndex = options.beforeIndex ?? total;
+      const fromIndex = Math.max(0, beforeIndex - options.limit);
+      return { messages: messages.slice(fromIndex, beforeIndex), total, fromIndex };
+    }
+
     // Bounded paging uses the parseConversation message total, which differs
     // from meta.messageCount (the metadata count excludes tool_use-only and
     // thinking-only lines).
