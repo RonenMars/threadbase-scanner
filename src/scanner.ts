@@ -146,13 +146,19 @@ export class ConversationScanner {
   }
 
   async scan(options: ScanOptions = {}): Promise<ScanResult> {
+    const log = getLogger();
+    log.info({ profiles: options.profiles, codexRoots: options.codexRoots, providers: options.providers }, "scan: called");
     const profiles = await this.resolveProfiles(options.profiles);
+    log.info({ resolvedCount: profiles.length }, "scan: profiles resolved");
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+    log.info({ activeCount: activeProfiles.length, persistent: this.persistent }, "scan: active profiles filtered");
     this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
 
     if (this.persistent) {
+      log.info({ event: "scan.persistent" }, "scan: routing to scanPersistent");
       return this.scanPersistent(activeProfiles, options);
     }
+    log.info({ event: "scan.in_memory" }, "scan: routing to scanInMemory");
     return this.scanInMemory(activeProfiles, options);
   }
 
@@ -165,10 +171,14 @@ export class ConversationScanner {
   ): Promise<ScanResult> {
     const log = getLogger();
     const startedAt = Date.now();
+    log.info({ activeProfiles: activeProfiles.length }, "scanPersistent: started");
     const engine = this.engine();
+    log.info({}, "scanPersistent: engine acquired, calling indexAll");
 
     const { scanned } = await engine.indexAll(activeProfiles, options);
+    log.info({ scanned }, "scanPersistent: indexAll complete");
     const allMetas = engine.allActive();
+    log.info({ metaCount: allMetas.length }, "scanPersistent: allActive retrieved");
 
     const { conversations, total } = this.finalize(allMetas, options);
     log.info(
