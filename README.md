@@ -9,33 +9,38 @@ Combines the best parts of four independent scanner implementations (VS Code, El
 
 ## Features
 
+- **Persistent SQLite index** (default) — durable metadata/search index with incremental byte-offset updates: after the first scan, a grown conversation file is re-read for only its appended bytes. Opt out with `persistent: false` for a pure in-memory scan.
 - **Deep discovery** — `**/*.jsonl` glob finds all conversations including subagents (1,472 conversations vs 351-497 from individual scanners)
 - **Full metadata extraction** — session ID, project, git branch, model, tool names, teammate/subagent detection
-- **Full-text search** — FlexSearch-powered indexing across all metadata fields
+- **Full-text search** — SQLite FTS5 (persistent) or FlexSearch (in-memory) across content and metadata
+- **File watching** — optional chokidar watcher with a periodic-rescan correctness backstop, emitting change events
+- **Bounded conversation paging** — read a message window without parsing the whole file, via byte-offset checkpoints
 - **Configurable content tiers** — `standard` (200/5K) and `full` (1,200/50K) preview/snippet limits, extensible
 - **Multiple views** — flat, tree (parent + subagents), grouped (by team)
 - **Filtering** — by project, account, time range, conversation type (conversations/subagents/teammates)
 - **5 sort modes** — recent, oldest, messages-desc, messages-asc, alphabetical
 - **Pagination** — limit/offset on all operations
+- **Multi-provider** — index Threadbase/Claude history and local OpenAI Codex CLI sessions through one normalized pipeline (Codex is opt-in; in-memory path only — see below)
 - **Multi-profile** — scan multiple Claude config directories
 - **LRU caching** — metadata and conversation caches for fast repeated access
 - **Git branch detection** — reads `.git/HEAD` with parent directory walking
 
 ## Installation
 
-This package is consumed from a public GitHub repo, not published to npm.
-
-To use it in your project, add it as a git URL dependency in your `package.json`:
-
-```json
-"dependencies": {
-  "@threadbase/scanner": "github:RonenMars/threadbase-scanner#v0.3.0"
-}
+```bash
+npm install @threadbase-sh/scanner
 ```
 
-Then run `npm install`. npm will clone this repo at tag `v0.3.0`, run its `prepare` script to build `dist/`, and make the package available under `node_modules/@threadbase/scanner/`.
+**Requires Node.js 18 or later.** The package uses `better-sqlite3` (a native module) for its persistent index; prebuilt binaries are downloaded for common platforms, with a node-gyp fallback otherwise.
 
-**Requires Node.js 18 or later.**
+### Persistent vs. in-memory
+
+By default the scanner maintains a durable SQLite index at `~/.config/threadbase-scanner/index.db`, so repeated scans only re-read files that changed and search/list queries are indexed. To opt out of the native dependency and use the legacy in-memory path, construct with `persistent: false` (or pass `--no-persist` to the CLI):
+
+```typescript
+const scanner = new ConversationScanner({ persistent: false }) // in-memory, no DB
+const scanner2 = new ConversationScanner({ persistent: { dbPath: '/tmp/tb.db' } }) // custom DB
+```
 
 ## Library Usage
 
@@ -94,6 +99,68 @@ const result = await scanner.scan({
 
 // Reuse the scanner instance for cached lookups
 const conv = await scanner.getConversation(someId)
+
+// Bounded page — reads only the requested window (persistent mode seeks from a
+// checkpoint instead of parsing the whole file)
+const page = await scanner.getConversationPage(someId, { limit: 50 })
+
+// Collision-safe sessionId lookup (session ids are not unique)
+const all = scanner.getConversationsBySessionId('sess-123')
+
+// Release the SQLite connection when done
+scanner.close()
+```
+
+### Scanning Codex CLI history (providers)
+
+The scanner can index local **OpenAI Codex CLI** rollout sessions alongside the
+default Threadbase/Claude history, normalizing both into the same
+`ConversationMeta` model. Codex support is **opt-in**: pass `providers` and the
+explicit `codexRoots` to discover under (no home directory is scanned by
+default).
+
+```typescript
+const scanner = new ConversationScanner()
+
+const result = await scanner.scan({
+  providers: ['claude-code', 'codex-cli'],
+  codexRoots: ['~/.codex/sessions'], // expand ~ yourself, or pass an absolute path
+})
+
+// Each meta carries its source provider
+for (const c of result.conversations) {
+  console.log(c.provider) // 'claude-code' | 'codex-cli'
+}
+
+// Search across both, or filter to one provider
+const codexHits = await scanner.search('refactor', { provider: 'codex-cli' })
+```
+
+`codexRoots` entries must be absolute paths — expand `~` before passing them
+(e.g. ``join(homedir(), '.codex/sessions')``). Codex metas also set `kind`
+(`'conversation'` | `'task'`) and `externalSessionId` (the Codex-native session
+id) when available.
+
+> **⚠️ In-memory only (for now).** Codex support runs through the legacy
+> in-memory scan path — the SQLite persistent engine indexes Threadbase/Claude
+> files only. Requesting `codex-cli` (via `providers` or `codexRoots`)
+> automatically routes that scan/search through the in-memory path, even on a
+> scanner constructed in persistent mode. Threadbase-only scans are unaffected
+> and still use SQLite. Persistent-mode Codex indexing is a planned follow-up.
+
+### Watching for changes (persistent mode)
+
+```typescript
+const scanner = new ConversationScanner() // persistent by default
+
+scanner.on('change', ({ filePath, meta }) => {
+  // meta is the fresh ConversationMeta, or null if the file was removed
+  refreshUI(meta)
+})
+
+await scanner.watch() // filesystem watcher + periodic rescan backstop
+// ... later
+await scanner.unwatch()
 ```
 
 ### View modes
@@ -263,6 +330,9 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `isTeammate` | boolean | VS Code |
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
+| `provider` | `'claude-code' \| 'codex-cli'` | Provider that produced the meta |
+| `kind` | `'conversation' \| 'task'` | Codex (optional) |
+| `externalSessionId` | string | Codex-native session id (optional) |
 
 ## Development
 

@@ -1,17 +1,15 @@
 import { createReadStream } from "fs";
-import { basename, dirname, join } from "path";
+import { basename } from "path";
 import { createInterface } from "readline";
 import { getLogger } from "./logger";
+import { applyTeamInfo, initialConvState, reduceConvLine } from "./persistent/conversation-reducer";
+import { finalizeMeta, initialReducerState, reduceLine } from "./persistent/metadata-reducer";
 import { cleanSystemTags } from "./tags";
 import type {
-  AttachmentSidecar,
   ContentTier,
   Conversation,
   ConversationMessage,
   ConversationMeta,
-  MessageMetadata,
-  MessageSender,
-  MessageSnapshot,
   TeamInfo,
   ToolResultBlock,
   ToolUseBlock,
@@ -25,157 +23,41 @@ export async function parseMeta(
 ): Promise<ConversationMeta | null> {
   const log = getLogger();
   log.trace({ filePath, account, tier: tier.name }, "parseMeta: start");
-  let sessionId = "";
-  let badJsonLines = 0;
-  let sessionName = "";
-  let latestTimestamp = "";
-  let cwd = "";
-  let teamName = "";
-  let model: string | null = null;
-  let messageCount = 0;
-  let lastMessageSender: MessageSender = "user";
-  let isTeammate = false;
-  let firstUserSeen = false;
-  let firstMessage: MessageSnapshot | null = null;
-  let lastMessage: MessageSnapshot | null = null;
-  let lastPrompt = "";
-  const toolNameSet = new Set<string>();
-  const previewParts: string[] = [];
-  const snippetParts: string[] = [];
-  let snippetLength = 0;
-  let previewLength = 0;
 
+  // Stream the whole file through the same per-line fold the incremental
+  // indexer uses, so a full parse and an append-then-resume produce identical
+  // metadata by construction.
+  const state = initialReducerState();
   const fileStream = createReadStream(filePath);
   const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
 
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
-
       let entry: Record<string, unknown>;
       try {
         entry = JSON.parse(line);
       } catch {
-        badJsonLines++;
+        state.badJsonLines++;
         continue;
       }
-
-      if (entry.cwd && !cwd) cwd = entry.cwd as string;
-      if (entry.sessionId && !sessionId) sessionId = entry.sessionId as string;
-      if (entry.slug && !sessionName) sessionName = entry.slug as string;
-      if (entry.teamName && !teamName) teamName = entry.teamName as string;
-      if (entry.timestamp) {
-        const ts = entry.timestamp as string;
-        if (!latestTimestamp || ts > latestTimestamp) latestTimestamp = ts;
-      }
-
-      const type = entry.type as string;
-
-      if (type === "last-prompt") {
-        if (entry.lastPrompt && !lastPrompt) lastPrompt = entry.lastPrompt as string;
-        continue;
-      }
-
-      // file-history-snapshot entries are intentionally excluded:
-      // they contain file-edit undo state, not conversation content.
-      if (type !== "user" && type !== "assistant") continue;
-      if (entry.isMeta) continue;
-
-      // Extract model from first assistant message
-      if (model === null) {
-        const msg = entry.message as Record<string, unknown> | undefined;
-        if (msg?.model) model = msg.model as string;
-      }
-
-      // Check for teammate in first user message
-      if (type === "user" && !firstUserSeen) {
-        firstUserSeen = true;
-        if (isTeammateContent((entry.message as Record<string, unknown>)?.content)) {
-          isTeammate = true;
-        }
-      }
-
-      // Extract content
-      const msg = entry.message as Record<string, unknown> | undefined;
-      const content = extractTextContent(msg?.content);
-      const hasToolUseResult = type === "user" && entry.toolUseResult != null;
-      const isOnlyToolResult = hasToolUseResult && isOnlyToolResultContent(msg?.content);
-
-      // Collect tool names
-      collectToolNames(msg?.content, toolNameSet);
-
-      if (content || isOnlyToolResult) {
-        messageCount++;
-        lastMessageSender = type as MessageSender;
-
-        if (content) {
-          const ts = (entry.timestamp as string) || "";
-          if (!firstMessage) {
-            firstMessage = { text: content.slice(0, 200), timestamp: ts };
-          }
-          lastMessage = { text: content.slice(0, 200), timestamp: ts };
-
-          if (previewLength < tier.previewMax) {
-            previewParts.push(content);
-            previewLength += content.length;
-          }
-          if (snippetLength < tier.snippetMax) {
-            const remaining = tier.snippetMax - snippetLength;
-            const chunk = content.length > remaining ? content.slice(0, remaining) : content;
-            snippetParts.push(chunk);
-            snippetLength += chunk.length;
-          }
-        }
-      }
+      reduceLine(state, entry, tier);
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseMeta: read failed");
     return null;
   }
 
-  if (badJsonLines > 0) {
-    log.warn({ filePath, badJsonLines }, "parseMeta: skipped malformed JSON lines");
+  if (state.badJsonLines > 0) {
+    log.warn(
+      { filePath, badJsonLines: state.badJsonLines },
+      "parseMeta: skipped malformed JSON lines",
+    );
   }
 
-  if (messageCount === 0) {
-    log.trace({ filePath }, "parseMeta: no messages");
-    return null;
-  }
-
-  const isSubagent = filePath.includes("/subagents/");
-  let parentSessionId: string | null = null;
-  if (isSubagent) {
-    const uuidDir = dirname(dirname(filePath));
-    parentSessionId = join(dirname(uuidDir), `${basename(uuidDir)}.jsonl`);
-  }
-
-  const projectPath = cwd;
-  const preview = previewParts.join(" ").slice(0, tier.previewMax);
-
-  return {
-    id: filePath,
-    filePath,
-    sessionId: sessionId || basename(filePath, ".jsonl"),
-    sessionName,
-    projectPath,
-    projectName: getShortProjectName(projectPath),
-    account,
-    timestamp: latestTimestamp || new Date().toISOString(),
-    messageCount,
-    lastMessageSender,
-    preview,
-    contentSnippet: snippetParts.join(" "),
-    gitBranch: null,
-    model,
-    isSubagent,
-    parentSessionId,
-    isTeammate,
-    teamName: teamName || null,
-    toolNames: Array.from(toolNameSet),
-    firstMessage,
-    lastMessage,
-    lastPrompt: lastPrompt || undefined,
-  };
+  const meta = finalizeMeta(state, filePath, account, tier);
+  if (!meta) log.trace({ filePath }, "parseMeta: no messages");
+  return meta;
 }
 
 export async function parseConversation(
@@ -186,15 +68,13 @@ export async function parseConversation(
   log.trace({ filePath, account }, "parseConversation: start");
   const messages: ConversationMessage[] = [];
   let badJsonLines = 0;
-  let sessionId = "";
-  let sessionName = "";
-  let latestTimestamp = "";
-  let cwd = "";
   const textParts: string[] = [];
-  const pendingToolUses = new Map<string, ToolUseBlock>();
-  const teamInfoMap = new Map<string, TeamInfo>();
   const turnDurations: TurnDuration[] = [];
-  let lastPrompt = "";
+
+  // The message line→message reduction lives in reduceConvLine (shared with the
+  // bounded page reader). turn_duration collection is parseConversation-only
+  // (pages don't need it), so it stays inline here.
+  const state = initialConvState();
 
   const fileStream = createReadStream(filePath);
   const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
@@ -211,116 +91,23 @@ export async function parseConversation(
         continue;
       }
 
-      if (entry.cwd && !cwd) cwd = entry.cwd as string;
-      if (entry.sessionId && !sessionId) sessionId = entry.sessionId as string;
-      if (entry.slug && !sessionName) sessionName = entry.slug as string;
-      if (entry.timestamp) {
-        const ts = entry.timestamp as string;
-        if (!latestTimestamp || ts > latestTimestamp) latestTimestamp = ts;
-      }
-
-      const type = entry.type as string;
-
-      if (type === "last-prompt") {
-        if (entry.lastPrompt && !lastPrompt) lastPrompt = entry.lastPrompt as string;
-        continue;
-      }
-
-      if (type === "system") {
-        if (entry.subtype === "turn_duration" && typeof entry.durationMs === "number") {
-          turnDurations.push({
-            durationMs: entry.durationMs as number,
-            messageCount: (entry.messageCount as number) || 0,
-            uuid: entry.uuid as string | undefined,
-          });
-        }
-        // file-history-snapshot entries are intentionally excluded:
-        // they contain file-edit undo state, not conversation content.
-        // stop_hook_summary and bridge_status are internal housekeeping only.
-        continue;
-      }
-
-      if (type !== "user" && type !== "assistant") continue;
-      if (entry.isMeta) continue;
-
-      const msg = entry.message as Record<string, unknown> | undefined;
-
-      // Track tool_use blocks from assistant messages
-      const toolUseBlocks = extractToolUseBlocks(msg?.content);
-      for (const block of toolUseBlocks) {
-        pendingToolUses.set(block.id, block);
-      }
-
-      const hasToolUseResult = type === "user" && entry.toolUseResult != null;
-      const isToolResultOnly = hasToolUseResult && isOnlyToolResultContent(msg?.content);
-
-      const content = extractTextContent(msg?.content);
-
-      const thinking = type === "assistant" ? extractThinking(msg?.content) : null;
-      const hasThinking = !!(thinking?.content || thinking?.signature);
-
-      if (content || isToolResultOnly || toolUseBlocks.length > 0 || hasThinking) {
-        const metadata: MessageMetadata = {};
-
-        if (msg?.model) metadata.model = msg.model as string;
-        if (msg?.stop_reason !== undefined) metadata.stopReason = msg.stop_reason as string | null;
-        if (entry.gitBranch) metadata.gitBranch = entry.gitBranch as string;
-        if (entry.version) metadata.version = entry.version as string;
-
-        const usage = msg?.usage as Record<string, number> | undefined;
-        if (usage) {
-          if (usage.input_tokens) metadata.inputTokens = usage.input_tokens;
-          if (usage.output_tokens) metadata.outputTokens = usage.output_tokens;
-          if (usage.cache_read_input_tokens)
-            metadata.cacheReadTokens = usage.cache_read_input_tokens;
-          if (usage.cache_creation_input_tokens)
-            metadata.cacheCreationTokens = usage.cache_creation_input_tokens;
-        }
-
-        const toolUseNames = extractToolUseNames(msg?.content);
-        if (toolUseNames.length > 0) metadata.toolUses = toolUseNames;
-        if (toolUseBlocks.length > 0) metadata.toolUseBlocks = toolUseBlocks;
-
-        if (isToolResultOnly) {
-          const toolResultBlocks = extractToolResultBlocks(msg?.content, pendingToolUses);
-          if (toolResultBlocks.length > 0) metadata.toolResults = toolResultBlocks;
-        }
-
-        if (entry.teamName) {
-          metadata.teamName = entry.teamName as string;
-          if (!teamInfoMap.has(metadata.teamName) && content) {
-            const info = parseTeammateMessageTag(content);
-            if (info) teamInfoMap.set(metadata.teamName, info);
-          }
-        }
-
-        const thinkingContent = thinking?.content || undefined;
-        const thinkingSignature = thinking?.signature || undefined;
-
-        const hasMetadata = Object.keys(metadata).length > 0;
-
-        messages.push({
-          role: type as MessageSender,
-          text: content || "",
-          timestamp: (entry.timestamp as string) || "",
-          uuid: (entry.uuid as string) || undefined,
-          metadata: hasMetadata ? metadata : undefined,
-          isToolResult: isToolResultOnly || undefined,
-          isThinking: thinkingContent || thinkingSignature ? true : undefined,
-          thinkingContent,
-          thinkingSignature,
-          parentUuid:
-            entry.parentUuid !== undefined ? (entry.parentUuid as string | null) : undefined,
-          requestId: type === "assistant" ? (entry.requestId as string | undefined) : undefined,
-          promptId: type === "user" ? (entry.promptId as string | undefined) : undefined,
-          isSidechain: typeof entry.isSidechain === "boolean" ? entry.isSidechain : undefined,
-          permissionMode:
-            type === "user" ? (entry.permissionMode as string | undefined) : undefined,
-          hasImages: hasImageBlocks(msg?.content) || undefined,
-          attachment:
-            entry.attachment !== undefined ? (entry.attachment as AttachmentSidecar) : undefined,
+      if (
+        entry.type === "system" &&
+        entry.subtype === "turn_duration" &&
+        typeof entry.durationMs === "number"
+      ) {
+        turnDurations.push({
+          durationMs: entry.durationMs as number,
+          messageCount: (entry.messageCount as number) || 0,
+          uuid: entry.uuid as string | undefined,
         });
-        if (content) textParts.push(content);
+        continue;
+      }
+
+      const message = reduceConvLine(state, entry);
+      if (message) {
+        messages.push(message);
+        if (message.text) textParts.push(message.text);
       }
     }
   } catch (err) {
@@ -338,37 +125,28 @@ export async function parseConversation(
   }
 
   log.debug({ filePath, messageCount: messages.length }, "parseConversation: complete");
-
-  // Apply collected team info to matching messages
-  if (teamInfoMap.size > 0) {
-    for (const msg of messages) {
-      if (msg.metadata?.teamName) {
-        const info = teamInfoMap.get(msg.metadata.teamName);
-        if (info) msg.metadata.teamInfo = info;
-      }
-    }
-  }
+  applyTeamInfo(messages, state);
 
   return {
     id: filePath,
     filePath,
-    projectPath: cwd,
-    projectName: getShortProjectName(cwd),
-    sessionId: sessionId || basename(filePath, ".jsonl"),
-    sessionName,
+    projectPath: state.cwd,
+    projectName: getShortProjectName(state.cwd),
+    sessionId: state.sessionId || basename(filePath, ".jsonl"),
+    sessionName: state.sessionName,
     messages,
     fullText: textParts.join(" "),
-    timestamp: latestTimestamp || new Date().toISOString(),
+    timestamp: state.latestTimestamp || new Date().toISOString(),
     messageCount: messages.length,
     account,
     turnDurations: turnDurations.length > 0 ? turnDurations : undefined,
-    lastPrompt: lastPrompt || undefined,
+    lastPrompt: state.lastPrompt || undefined,
   };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-function extractTextContent(content: unknown): string {
+export function extractTextContent(content: unknown): string {
   if (!content) return "";
   if (typeof content === "string") return cleanSystemTags(content);
   if (Array.isArray(content)) {
@@ -386,14 +164,14 @@ function extractTextContent(content: unknown): string {
   return "";
 }
 
-function extractToolUseNames(content: unknown): string[] {
+export function extractToolUseNames(content: unknown): string[] {
   if (!Array.isArray(content)) return [];
   return content
     .filter((item) => item?.type === "tool_use" && item?.name)
     .map((item) => item.name as string);
 }
 
-function extractToolUseBlocks(content: unknown): ToolUseBlock[] {
+export function extractToolUseBlocks(content: unknown): ToolUseBlock[] {
   if (!Array.isArray(content)) return [];
   return content
     .filter((item) => item?.type === "tool_use" && item?.name && item?.id)
@@ -416,7 +194,7 @@ const TOOL_NAME_TO_TYPE: Record<string, ToolResultBlock["type"]> = {
   TaskUpdate: "taskUpdate",
 };
 
-function extractToolResultBlocks(
+export function extractToolResultBlocks(
   content: unknown,
   pendingToolUses: Map<string, ToolUseBlock>,
 ): ToolResultBlock[] {
@@ -437,7 +215,7 @@ function extractToolResultBlocks(
     });
 }
 
-function collectToolNames(content: unknown, toolSet: Set<string>): void {
+export function collectToolNames(content: unknown, toolSet: Set<string>): void {
   if (!Array.isArray(content)) return;
   for (const item of content) {
     if (item?.type === "tool_use" && item?.name) {
@@ -446,12 +224,12 @@ function collectToolNames(content: unknown, toolSet: Set<string>): void {
   }
 }
 
-function isOnlyToolResultContent(content: unknown): boolean {
+export function isOnlyToolResultContent(content: unknown): boolean {
   if (!Array.isArray(content)) return false;
   return content.length > 0 && content.every((item) => item?.type === "tool_result");
 }
 
-function isTeammateContent(content: unknown): boolean {
+export function isTeammateContent(content: unknown): boolean {
   const raw =
     typeof content === "string"
       ? content
@@ -465,7 +243,7 @@ function isTeammateContent(content: unknown): boolean {
   return raw.includes("<teammate-message");
 }
 
-function extractThinking(content: unknown): { content: string; signature: string } {
+export function extractThinking(content: unknown): { content: string; signature: string } {
   if (!Array.isArray(content)) return { content: "", signature: "" };
   const blocks = content.filter((item) => item?.type === "thinking");
   return {
@@ -480,7 +258,7 @@ function extractThinking(content: unknown): { content: string; signature: string
   };
 }
 
-function hasImageBlocks(content: unknown): boolean {
+export function hasImageBlocks(content: unknown): boolean {
   if (!Array.isArray(content)) return false;
   return content.some(
     (item) =>
@@ -489,7 +267,7 @@ function hasImageBlocks(content: unknown): boolean {
   );
 }
 
-function parseTeammateMessageTag(content: string): TeamInfo | null {
+export function parseTeammateMessageTag(content: string): TeamInfo | null {
   const match = content.match(/<teammate-message\s+([^>]*)>/);
   if (!match) return null;
   const attrs = match[1];

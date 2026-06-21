@@ -10,6 +10,8 @@ export { readGitBranch } from "./git";
 export { SearchIndexer } from "./indexer";
 export type { Logger, LoggerOptions } from "./logger";
 export { createLogger, getLogger, setLogger } from "./logger";
+export type { Sidecar } from "./persistent/sidecar";
+export { readSidecar, sidecarPath } from "./persistent/sidecar";
 export {
   detectDefaultProfile,
   getProjectsDir,
@@ -17,6 +19,19 @@ export {
   resolveConfigDir,
   saveProfiles,
 } from "./profiles";
+export { CodexCliProvider } from "./providers/codex-cli";
+export type {
+  DiscoveredConversationFile,
+  ScannerProvider,
+  ScannerProviderName,
+} from "./providers/provider";
+export { ThreadbaseProvider } from "./providers/threadbase";
+export type {
+  ConversationScannerOptions,
+  PersistentConfig,
+  ScannerChangeEvent,
+  WatchOptions,
+} from "./scanner";
 export { ConversationScanner } from "./scanner";
 export { cleanSystemTags } from "./tags";
 export { DEFAULT_TIERS, resolveTier } from "./tiers";

@@ -1,4 +1,7 @@
-import { statSync } from "fs";
+import { EventEmitter } from "events";
+import { closeSync, openSync, readSync, statSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { LRUCache } from "./cache";
 import { discoverJsonlFiles } from "./discovery";
 import {
@@ -14,7 +17,18 @@ import { readGitBranch } from "./git";
 import { SearchIndexer } from "./indexer";
 import { getLogger } from "./logger";
 import { parseConversation, parseMeta } from "./parser";
+import { classify } from "./persistent/cursor";
+import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
+import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
+import { parseMetaWithProvider } from "./providers/parse";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  type ScannerProvider,
+} from "./providers/provider";
+import { ThreadbaseProvider } from "./providers/threadbase";
+import { generateMatches } from "./search-matches";
 import { resolveTier } from "./tiers";
 import type {
   ContentTier,
@@ -32,32 +46,172 @@ import type {
   SingleFilePage,
   TreeConversation,
 } from "./types";
+import { FileWatcher } from "./watcher/file-watcher";
+import { type IndexJob, IndexQueue } from "./watcher/index-queue";
 
 const BATCH_SIZE = 12;
 const DEFAULT_CONFIG_PATH = "~/.config/threadbase-scanner";
 
+// Default persistent-index location. Overridable via TB_SCANNER_DB (used by
+// tests for isolation, and handy for pointing at an alternate DB in ops).
+function defaultDbPath(): string {
+  return process.env.TB_SCANNER_DB ?? join(homedir(), ".config", "threadbase-scanner", "index.db");
+}
+
+export interface PersistentConfig {
+  dbPath?: string;
+  // Write a portable <file>.idx.json sidecar next to each indexed JSONL for
+  // debugging/portability/recovery. Off by default. SQLite stays canonical.
+  sidecar?: boolean;
+}
+
+export interface ConversationScannerOptions {
+  metadataCacheSize?: number;
+  conversationCacheSize?: number;
+  // SQLite-backed persistent index. Enabled by default (at DEFAULT_DB_PATH).
+  // Pass `false` for the legacy in-memory path (no native dependency, no DB
+  // file). Pass `{ dbPath }` to override the database location.
+  persistent?: false | PersistentConfig;
+}
+
+export interface WatchOptions {
+  profiles?: Profile[];
+  // Watcher debounce window (ms). Default 400.
+  debounceMs?: number;
+  // Periodic full rescan as a correctness fallback for missed FS events.
+  // Default 60_000ms; set 0 to disable.
+  periodicMs?: number;
+}
+
+// Emitted after the index changes for one file. `meta` is the fresh metadata,
+// or null when the file was removed/emptied (deleted from the index).
+export interface ScannerChangeEvent {
+  filePath: string;
+  account: string;
+  meta: ConversationMeta | null;
+  reason: IndexJob["reason"];
+}
+
 export class ConversationScanner {
   private metadataCache: Map<string, ConversationMeta> = new Map();
   private conversationLRU: LRUCache<string, Conversation>;
-  private sessionIdIndex: Map<string, ConversationMeta> = new Map();
+  // session_id is NOT unique, so this maps a sessionId to every active meta that
+  // carries it. Resolution picks deterministically (newest timestamp, then path
+  // ascending) so dropping one file never hides another with the same id.
+  private sessionIdIndex: Map<string, ConversationMeta[]> = new Map();
   private projects: Set<string> = new Set();
   private indexer: SearchIndexer = new SearchIndexer();
   // Tier the most recent scan() ran with, so refreshFile() re-parses a single
   // file at the same content depth. Defaults to the standard tier.
   private lastTier: ContentTier = resolveTier("standard");
 
-  constructor(options?: { metadataCacheSize?: number; conversationCacheSize?: number }) {
+  // null when persistent mode is disabled (legacy in-memory path). Lazily
+  // opened on first use so merely constructing a scanner never touches disk.
+  private readonly dbPath: string | null;
+  private readonly sidecarEnabled: boolean;
+  private engineInstance: PersistentEngine | null = null;
+
+  private emitter = new EventEmitter();
+  private watcher: FileWatcher | null = null;
+  private queue: IndexQueue | null = null;
+  private periodicTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(options?: ConversationScannerOptions) {
     this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
+    if (options?.persistent === false) {
+      this.dbPath = null;
+      this.sidecarEnabled = false;
+    } else {
+      this.dbPath = options?.persistent?.dbPath ?? defaultDbPath();
+      this.sidecarEnabled = options?.persistent?.sidecar ?? false;
+    }
+  }
+
+  private get persistent(): boolean {
+    return this.dbPath !== null;
+  }
+
+  private engine(): PersistentEngine {
+    if (!this.engineInstance) {
+      this.engineInstance = new PersistentEngine(this.dbPath as string, {
+        sidecar: this.sidecarEnabled,
+      });
+    }
+    return this.engineInstance;
+  }
+
+  // Release the SQLite connection. No-op in legacy mode. Safe to call
+  // repeatedly. Stops the watcher first if one is running; call unwatch()
+  // explicitly beforehand if you need to await watcher teardown.
+  close(): void {
+    if (this.watcher || this.queue || this.periodicTimer) void this.unwatch();
+    this.engineInstance?.close();
+    this.engineInstance = null;
   }
 
   async scan(options: ScanOptions = {}): Promise<ScanResult> {
-    const log = getLogger();
-    const startedAt = Date.now();
     const profiles = await this.resolveProfiles(options.profiles);
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+    this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    const tier = resolveTier(options.tier ?? "standard", options.tiers);
-    this.lastTier = tier;
+    if (this.persistent) {
+      return this.scanPersistent(activeProfiles, options);
+    }
+    return this.scanInMemory(activeProfiles, options);
+  }
+
+  // SQLite-backed scan: (re)index changed files into the DB, then query all
+  // active metas and run the identical filter/sort/view/paginate pipeline as
+  // the in-memory path — guaranteeing an identical ScanResult shape.
+  private async scanPersistent(
+    activeProfiles: Profile[],
+    options: ScanOptions,
+  ): Promise<ScanResult> {
+    const log = getLogger();
+    const startedAt = Date.now();
+    const engine = this.engine();
+
+    const { scanned } = await engine.indexAll(activeProfiles, options);
+    const allMetas = engine.allActive();
+
+    const { conversations, total } = this.finalize(allMetas, options);
+    log.info(
+      { scanned, kept: allMetas.length, filteredTotal: total, elapsedMs: Date.now() - startedAt },
+      "scan: complete (persistent)",
+    );
+    return { conversations, total, scanned };
+  }
+
+  // Apply include/project/account/since filters, sort, view transform, and
+  // pagination. Shared by both backends so results never diverge.
+  private finalize(
+    allMetas: ConversationMeta[],
+    options: ScanOptions,
+  ): { conversations: ScanResult["conversations"]; total: number } {
+    let filtered = allMetas;
+    if (options.include && options.include !== "all") {
+      filtered = applyIncludeFilter(filtered, options.include);
+    }
+    if (options.project) filtered = applyProjectFilter(filtered, options.project);
+    if (options.account) filtered = applyAccountFilter(filtered, options.account);
+    if (options.since) filtered = applySinceFilter(filtered, options.since);
+
+    filtered = applySort(filtered, options.sort ?? "recent");
+    const total = filtered.length;
+    const conversations = this.transformView(filtered, options);
+
+    if (Array.isArray(conversations)) {
+      const limit = options.limit ?? 50;
+      const offset = options.offset ?? 0;
+      return { conversations: applyPagination(conversations, limit, offset).items, total };
+    }
+    return { conversations, total };
+  }
+
+  private async scanInMemory(activeProfiles: Profile[], options: ScanOptions): Promise<ScanResult> {
+    const log = getLogger();
+    const startedAt = Date.now();
+    const tier = this.lastTier;
 
     log.info(
       {
@@ -77,12 +231,7 @@ export class ConversationScanner {
     this.projects.clear();
     this.indexer.clear();
 
-    const configDirs = activeProfiles.map((p) => ({
-      projectsDir: getProjectsDir(p),
-      account: p.id,
-    }));
-
-    const files = await discoverJsonlFiles(configDirs);
+    const files = await this.discoverWithProviders(activeProfiles, options);
     const totalFiles = files.length;
     let scanned = 0;
     let parseFailures = 0;
@@ -106,7 +255,7 @@ export class ConversationScanner {
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
-        batch.map(async ({ filePath, account }) => {
+        batch.map(async ({ filePath, account, provider }) => {
           if (statCache) {
             const cached = statCache.get(filePath);
             if (cached) {
@@ -116,19 +265,21 @@ export class ConversationScanner {
                   return cached.meta;
                 }
               } catch {
-                // file disappeared — fall through to parseMeta which will return null
+                // file disappeared — fall through to parse which will return null
               }
             }
           }
           try {
-            const meta = await parseMeta(filePath, account, tier);
-            if (meta) {
+            const meta = await parseMetaWithProvider(provider, filePath, account, tier);
+            // The provider may already know its branch (Codex reads it from
+            // session_meta). Only walk the filesystem when it doesn't.
+            if (meta && meta.gitBranch === null && meta.projectPath) {
               meta.gitBranch = resolveGitBranch(meta.projectPath);
             }
             return meta;
           } catch (err) {
             parseFailures++;
-            log.warn({ filePath, account, err }, "scan: parseMeta threw");
+            log.warn({ filePath, account, provider: provider.name, err }, "scan: parse threw");
             return null;
           }
         }),
@@ -138,7 +289,7 @@ export class ConversationScanner {
       for (const meta of results) {
         if (meta && meta.messageCount > 0) {
           this.metadataCache.set(meta.id, meta);
-          this.sessionIdIndex.set(meta.sessionId, meta);
+          this.addToSessionIndex(meta);
           this.projects.add(meta.projectPath);
           allMetas.push(meta);
           batchMetas.push(meta);
@@ -155,25 +306,7 @@ export class ConversationScanner {
       options.onProgress?.(scanned, totalFiles);
     }
 
-    // Apply filters
-    let filtered = allMetas;
-    if (options.include && options.include !== "all") {
-      filtered = applyIncludeFilter(filtered, options.include);
-    }
-    if (options.project) {
-      filtered = applyProjectFilter(filtered, options.project);
-    }
-    if (options.account) {
-      filtered = applyAccountFilter(filtered, options.account);
-    }
-    if (options.since) {
-      filtered = applySinceFilter(filtered, options.since);
-    }
-
-    filtered = applySort(filtered, options.sort ?? "recent");
-
-    const total = filtered.length;
-    const conversations = this.transformView(filtered, options);
+    const { conversations, total } = this.finalize(allMetas, options);
 
     const elapsedMs = Date.now() - startedAt;
     log.info(
@@ -188,13 +321,6 @@ export class ConversationScanner {
       "scan: complete",
     );
 
-    if (Array.isArray(conversations)) {
-      const limit = options.limit ?? 50;
-      const offset = options.offset ?? 0;
-      const paginated = applyPagination(conversations, limit, offset);
-      return { conversations: paginated.items, total, scanned };
-    }
-
     return { conversations, total, scanned };
   }
 
@@ -202,15 +328,36 @@ export class ConversationScanner {
     const log = getLogger();
     log.debug({ query, indexSize: this.indexer.getDocumentCount() }, "search: start");
 
-    if (this.indexer.getDocumentCount() === 0) {
-      log.debug("search: index empty, triggering scan");
-      await this.scan({ ...options, limit: undefined, offset: undefined });
+    let results: SearchResult[];
+    if (this.persistent) {
+      // SQLite FTS5 is the persistent search engine. Index once if the DB is
+      // empty (mirroring the in-memory "scan on first search" contract), then
+      // query FTS directly — no in-memory index to warm.
+      const engine = this.engine();
+      if (engine.conversations.count() === 0) {
+        log.debug("search: persistent index empty, triggering scan");
+        const profiles = await this.resolveProfiles(options.profiles);
+        const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+        await engine.indexAll(activeProfiles, { ...options, limit: undefined, offset: undefined });
+      }
+      const metas = engine.searchMetas(query, (options.limit ?? 50) * 2);
+      results = query.trim()
+        ? metas.map((meta) => ({ meta, score: 1, matches: generateMatches(meta, query) }))
+        : metas.map((meta) => ({
+            meta,
+            score: 1,
+            matches: [{ field: "timestamp", snippet: meta.preview }],
+          }));
+    } else {
+      if (this.indexer.getDocumentCount() === 0) {
+        log.debug("search: index empty, triggering scan");
+        await this.scan({ ...options, limit: undefined, offset: undefined });
+      }
+      results = this.indexer.search(query, {
+        fields: options.fields,
+        limit: (options.limit ?? 50) * 2,
+      });
     }
-
-    let results = this.indexer.search(query, {
-      fields: options.fields,
-      limit: (options.limit ?? 50) * 2,
-    });
 
     if (options.include && options.include !== "all") {
       results = results.filter((r) => {
@@ -237,6 +384,11 @@ export class ConversationScanner {
     if (options.account) {
       results = results.filter((r) => r.meta.account === options.account);
     }
+    if (options.provider) {
+      results = results.filter(
+        (r) => (r.meta.provider ?? CLAUDE_CODE_PROVIDER) === options.provider,
+      );
+    }
     if (options.since) {
       const cutoff = parseSinceCutoff(options.since);
       results = results.filter((r) => new Date(r.meta.timestamp).getTime() >= cutoff.getTime());
@@ -260,7 +412,9 @@ export class ConversationScanner {
       return cached;
     }
 
-    const meta = this.metadataCache.get(id) ?? this.sessionIdIndex.get(id);
+    const meta = this.persistent
+      ? this.engine().getByIdOrSession(id)
+      : (this.metadataCache.get(id) ?? this.resolveSessionId(id));
     if (!meta) {
       log.debug({ id }, "getConversation: not found in metadata");
       return null;
@@ -268,7 +422,10 @@ export class ConversationScanner {
 
     log.debug({ id, filePath: meta.filePath }, "getConversation: cache miss, parsing");
     try {
-      const conversation = await parseConversation(meta.filePath, meta.account);
+      const conversation =
+        meta.provider === CODEX_CLI_PROVIDER
+          ? await parseCodexConversation(meta.filePath, meta.account)
+          : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
         this.conversationLRU.set(id, conversation);
       }
@@ -289,17 +446,22 @@ export class ConversationScanner {
   // (fromIndex > 0). Returns null when the id can't be resolved/parsed — the
   // same contract as getConversation.
   //
-  // Strategy: parse-once-then-slice. This delegates to getConversation, which
-  // parses the full conversation and caches it in conversationLRU, then slices
-  // the window. Message indices are therefore identical to a full
-  // parseConversation() by construction (same parse, same messages array).
-  // Repeated page requests for the same id reuse the single cached parse. The
-  // bounded-memory win (not holding all messages) is deferred — see
-  // docs/plans/2026-06-10-paged-conversation-parse.md.
+  // Persistent mode: a true bounded read — the engine seeks from the nearest
+  // checkpoint and parses only the requested window (checkpoints are built
+  // lazily for large conversations). Windowed message indices are proven
+  // identical to parseConversation().messages.slice(...) by the paged-reader
+  // equivalence test.
+  //
+  // Legacy mode: parse-once-then-slice via getConversation (cached in the LRU),
+  // which is identical by construction.
   async getConversationPage(
     id: string,
     options: GetConversationPageOptions,
   ): Promise<ConversationPage | null> {
+    if (this.persistent) {
+      return this.engine().getPage(id, options);
+    }
+
     const conversation = await this.getConversation(id);
     if (!conversation) return null;
 
@@ -356,6 +518,35 @@ export class ConversationScanner {
   // dropped from all indexes.
   async refreshFile(filePath: string, account?: string): Promise<ConversationMeta | null> {
     const log = getLogger();
+
+    if (this.persistent) {
+      const engine = this.engine();
+      const previous = engine.getByIdOrSession(filePath);
+      const resolvedAccount = account ?? previous?.account ?? "default";
+      const evict = (m: ConversationMeta | null) => {
+        if (!m) return;
+        this.conversationLRU.delete(m.id);
+        this.conversationLRU.delete(m.sessionId);
+      };
+      evict(previous);
+      // Resolve the provider so a Codex file refreshes through the Codex reducer
+      // rather than the Threadbase tail-read. Prefer stored metadata; fall back
+      // to a structural sniff for a file the index hasn't seen yet.
+      const provider = await this.resolveProviderForFile(filePath, previous);
+      const meta = await engine.indexFile(
+        filePath,
+        resolvedAccount,
+        this.lastTier.name,
+        undefined,
+        readGitBranch,
+        true,
+        provider,
+      );
+      evict(meta);
+      log.debug({ filePath, kept: !!meta }, "refreshFile: updated persistent index");
+      return meta;
+    }
+
     const previous = this.metadataCache.get(filePath);
     const resolvedAccount = account ?? previous?.account ?? "default";
 
@@ -381,7 +572,7 @@ export class ConversationScanner {
     if (!meta || meta.messageCount === 0) {
       if (previous) {
         this.metadataCache.delete(previous.id);
-        this.sessionIdIndex.delete(previous.sessionId);
+        this.removeFromSessionIndex(previous);
         this.indexer.removeDocument(previous.id);
       }
       log.debug({ filePath }, "refreshFile: dropped (no parseable messages)");
@@ -390,12 +581,11 @@ export class ConversationScanner {
 
     meta.gitBranch = readGitBranch(meta.projectPath);
 
-    // A re-parse can change the sessionId mapping; clear the old one first.
-    if (previous && previous.sessionId !== meta.sessionId) {
-      this.sessionIdIndex.delete(previous.sessionId);
-    }
+    // A re-parse can change the sessionId mapping; clear the old entry first so
+    // we don't leave this file listed under a stale sessionId.
+    if (previous) this.removeFromSessionIndex(previous);
     this.metadataCache.set(meta.id, meta);
-    this.sessionIdIndex.set(meta.sessionId, meta);
+    this.addToSessionIndex(meta);
     this.projects.add(meta.projectPath);
     if (previous) {
       this.indexer.updateDocument(meta);
@@ -411,15 +601,245 @@ export class ConversationScanner {
   }
 
   getMetadataCache(): Map<string, ConversationMeta> {
+    if (this.persistent) {
+      const map = new Map<string, ConversationMeta>();
+      for (const meta of this.engine().allActive()) map.set(meta.id, meta);
+      return map;
+    }
     return this.metadataCache;
   }
 
+  // Collision-safe sessionId lookup. session_id is NOT unique (the parser falls
+  // back to the file basename, and resumed/subagent sessions repeat ids), so
+  // getConversation(sessionId) is a convenience that resolves to one match;
+  // this returns every active conversation sharing the id, newest first.
+  getConversationsBySessionId(sessionId: string): ConversationMeta[] {
+    if (this.persistent) {
+      return this.engine().getAllBySessionId(sessionId);
+    }
+    return this.sortBySessionPriority(this.sessionIdIndex.get(sessionId) ?? []);
+  }
+
   getProjects(): string[] {
+    const source = this.persistent ? this.engine().getProjects() : this.projects;
     const normalized = new Set<string>();
-    for (const p of this.projects) {
+    for (const p of source) {
       normalized.add(p.replace(/\/+$/, ""));
     }
     return Array.from(normalized).sort();
+  }
+
+  // ── File watching (persistent mode only) ────────────────────────────────
+
+  // Subscribe to index changes. Events: "change" → ScannerChangeEvent,
+  // "error" → Error. Returns this for chaining.
+  on(event: "change", listener: (e: ScannerChangeEvent) => void): this;
+  on(event: "error", listener: (err: Error) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this {
+    this.emitter.on(event, listener);
+    return this;
+  }
+
+  off(event: string, listener: (...args: any[]) => void): this {
+    this.emitter.off(event, listener);
+    return this;
+  }
+
+  // Start watching the active profiles' project dirs. A filesystem watcher
+  // feeds debounced, path-deduplicated index jobs through a single-writer
+  // queue; a periodic full rescan backstops any events the watcher misses
+  // (sleep/wake, network FS, restarts). Emits "change" per indexed file.
+  // Persistent mode only — throws in legacy mode (no durable index to update).
+  async watch(options: WatchOptions = {}): Promise<void> {
+    if (!this.persistent) {
+      throw new Error("watch() requires persistent mode; construct with persistent enabled");
+    }
+    if (this.watcher) return; // already watching
+
+    const profiles = await this.resolveProfiles(options.profiles);
+    const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
+
+    this.queue = new IndexQueue(async (job) => {
+      try {
+        // Create/change and delete both route through refreshFile: a removed
+        // file stat-fails or parses empty, so refreshFile drops its row and
+        // returns null. The index stays correct either way.
+        const meta = await this.refreshFile(job.filePath, job.account);
+        this.emitter.emit("change", {
+          filePath: job.filePath,
+          account: job.account,
+          meta,
+          reason: job.reason,
+        } satisfies ScannerChangeEvent);
+      } catch (err) {
+        this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+
+    this.watcher = new FileWatcher(
+      activeProfiles,
+      (e) => {
+        this.queue?.enqueue({
+          filePath: e.filePath,
+          account: e.account,
+          reason: "watcher",
+        });
+      },
+      { debounceMs: options.debounceMs },
+    );
+    await this.watcher.start();
+
+    const periodicMs = options.periodicMs ?? 60_000;
+    if (periodicMs > 0) {
+      this.periodicTimer = setInterval(() => {
+        void this.periodicReconcile(activeProfiles);
+      }, periodicMs);
+      // Don't keep the process alive solely for the rescan timer.
+      this.periodicTimer.unref?.();
+    }
+
+    getLogger().info({ profiles: activeProfiles.length, periodicMs }, "watch: started");
+  }
+
+  // Periodic correctness backstop: re-discover all files and enqueue them
+  // through the same queue the watcher uses, so any add/change the watcher
+  // missed still gets indexed and emits a "change" event. Vanished files
+  // (active in the DB but no longer on disk) are enqueued too — refreshFile
+  // drops them. Routing through the queue (not a direct scan) keeps event
+  // emission and single-writer serialization unified.
+  private async periodicReconcile(activeProfiles: Profile[]): Promise<void> {
+    if (!this.queue) return;
+    try {
+      const engine = this.engine();
+      const configDirs = activeProfiles.map((p) => ({
+        projectsDir: getProjectsDir(p),
+        account: p.id,
+      }));
+      const discovered = await discoverJsonlFiles(configDirs);
+      const seen = new Set<string>();
+      for (const { filePath, account } of discovered) {
+        seen.add(filePath);
+        // Only enqueue genuinely-changed files so an idle tick stays silent
+        // (no spurious "change" events for thousands of unchanged files).
+        const { change } = classify(filePath, engine.files.getByPath(filePath));
+        if (change !== "unchanged") {
+          this.queue.enqueue({ filePath, account, reason: "periodic" });
+        }
+      }
+      // Files in the index but gone from disk → enqueue so refreshFile drops them.
+      for (const path of engine.files.allActivePaths()) {
+        if (!seen.has(path)) {
+          this.queue.enqueue({ filePath: path, account: "default", reason: "periodic" });
+        }
+      }
+    } catch (err) {
+      this.emitter.emit("error", err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  // Stop watching and drain any in-flight index jobs.
+  async unwatch(): Promise<void> {
+    if (this.periodicTimer) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
+    }
+    if (this.watcher) {
+      await this.watcher.stop();
+      this.watcher = null;
+    }
+    if (this.queue) {
+      await this.queue.onIdle();
+      this.queue = null;
+    }
+  }
+
+  // ── Provider plumbing (in-memory path) ──────────────────────────────────
+
+  // Build the flat parse worklist for the enabled providers. Threadbase
+  // discovers under the active profiles' project dirs; Codex discovers under
+  // the explicit codexRoots (opt-in — no default home scan).
+  private async discoverWithProviders(
+    activeProfiles: Profile[],
+    options: ScanOptions,
+  ): Promise<{ filePath: string; account: string; provider: ScannerProvider }[]> {
+    const enabled = options.providers ?? [CLAUDE_CODE_PROVIDER];
+    const work: { filePath: string; account: string; provider: ScannerProvider }[] = [];
+
+    if (enabled.includes(CLAUDE_CODE_PROVIDER)) {
+      const provider = new ThreadbaseProvider();
+      const roots = activeProfiles.map((p) => `${getProjectsDir(p)}\0${p.id}`);
+      for (const f of await provider.discover(roots)) {
+        work.push({ ...f, provider });
+      }
+    }
+    if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
+      const provider = new CodexCliProvider();
+      for (const f of await provider.discover(options.codexRoots as string[])) {
+        work.push({ ...f, provider });
+      }
+    }
+    return work;
+  }
+
+  // Resolve which provider should (re)parse a file. Stored metadata wins; for a
+  // file the index has not seen, sniff the first lines with each non-Threadbase
+  // provider's canParse. Returns undefined for Threadbase (the engine's default
+  // tail-read path).
+  private async resolveProviderForFile(
+    filePath: string,
+    previous: ConversationMeta | null,
+  ): Promise<ScannerProvider | undefined> {
+    if (previous?.provider === CODEX_CLI_PROVIDER) return new CodexCliProvider();
+    if (previous?.provider) return undefined; // known Threadbase
+    let sample = "";
+    try {
+      const fd = openSync(filePath, "r");
+      try {
+        const buf = Buffer.alloc(8192);
+        const n = readSync(fd, buf, 0, buf.length, 0);
+        sample = buf.subarray(0, n).toString("utf8");
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return undefined;
+    }
+    const codex = new CodexCliProvider();
+    if (codex.canParse(filePath, sample)) return codex;
+    return undefined;
+  }
+
+  private addToSessionIndex(meta: ConversationMeta): void {
+    const list = this.sessionIdIndex.get(meta.sessionId);
+    if (list) {
+      // Replace any existing entry for the same file (re-index), else append.
+      const i = list.findIndex((m) => m.id === meta.id);
+      if (i >= 0) list[i] = meta;
+      else list.push(meta);
+    } else {
+      this.sessionIdIndex.set(meta.sessionId, [meta]);
+    }
+  }
+
+  private removeFromSessionIndex(meta: ConversationMeta): void {
+    const list = this.sessionIdIndex.get(meta.sessionId);
+    if (!list) return;
+    const next = list.filter((m) => m.id !== meta.id);
+    if (next.length > 0) this.sessionIdIndex.set(meta.sessionId, next);
+    else this.sessionIdIndex.delete(meta.sessionId);
+  }
+
+  // Deterministic single-result sessionId resolution: newest timestamp first,
+  // tie-broken by absolute path ascending.
+  private resolveSessionId(sessionId: string): ConversationMeta | undefined {
+    return this.sortBySessionPriority(this.sessionIdIndex.get(sessionId) ?? [])[0];
+  }
+
+  private sortBySessionPriority(metas: ConversationMeta[]): ConversationMeta[] {
+    return [...metas].sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
+      return a.filePath < b.filePath ? -1 : a.filePath > b.filePath ? 1 : 0;
+    });
   }
 
   private async resolveProfiles(profiles?: Profile[]): Promise<Profile[]> {

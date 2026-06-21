@@ -4,7 +4,8 @@ import FlexSearchModule from "flexsearch";
 const FlexSearch = (FlexSearchModule as any).default ?? FlexSearchModule;
 
 import { getLogger } from "./logger";
-import type { ConversationMeta, SearchMatch, SearchResult } from "./types";
+import { generateMatches } from "./search-matches";
+import type { ConversationMeta, SearchResult } from "./types";
 
 export class SearchIndexer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -84,7 +85,7 @@ export class SearchIndexer {
         const meta = this.documents.get(id);
         if (!meta) continue;
 
-        const matches = this.generateMatches(meta, query);
+        const matches = generateMatches(meta, query);
 
         searchResults.push({ meta, score: 1, matches });
         if (searchResults.length >= limit) break;
@@ -104,36 +105,6 @@ export class SearchIndexer {
         score: 1,
         matches: [{ field: "timestamp", snippet: meta.preview }],
       }));
-  }
-
-  private generateMatches(meta: ConversationMeta, query: string): SearchMatch[] {
-    const matches: SearchMatch[] = [];
-    const lowerQuery = query.toLowerCase();
-
-    const fields: [string, string][] = [
-      ["contentSnippet", meta.contentSnippet],
-      ["projectName", meta.projectName],
-      ["sessionId", meta.sessionId],
-      ["sessionName", meta.sessionName],
-      ["account", meta.account],
-      ["model", meta.model || ""],
-      ["gitBranch", meta.gitBranch || ""],
-      ["toolNames", meta.toolNames.join(" ")],
-    ];
-
-    for (const [field, value] of fields) {
-      const idx = value.toLowerCase().indexOf(lowerQuery);
-      if (idx !== -1) {
-        const start = Math.max(0, idx - 80);
-        const end = Math.min(value.length, idx + query.length + 120);
-        let snippet = value.slice(start, end);
-        if (start > 0) snippet = `...${snippet}`;
-        if (end < value.length) snippet = `${snippet}...`;
-        matches.push({ field, snippet });
-      }
-    }
-
-    return matches.length > 0 ? matches : [{ field: "preview", snippet: meta.preview }];
   }
 
   getDocumentCount(): number {

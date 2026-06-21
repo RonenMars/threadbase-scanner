@@ -1,0 +1,6 @@
+{"timestamp":"2026-06-18T17:22:04.356Z","type":"session_meta","payload":{"id":"sess-basic-0001","timestamp":"2026-06-18T17:22:04.327Z","cwd":"/Users/dev/projects/widget","model_provider":"openai","git":{"branch":"main","commit_hash":"abc123"}}}
+{"timestamp":"2026-06-18T17:22:05.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}
+{"timestamp":"2026-06-18T17:22:06.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"How do I reverse a list in Python?"}]}}
+{"timestamp":"2026-06-18T17:22:08.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Use list.reverse() in place, or reversed(lst) for an iterator."}]}}
+{"timestamp":"2026-06-18T17:22:20.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"And to sort it?"}]}}
+{"timestamp":"2026-06-18T17:22:22.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Call lst.sort() to sort in place, or sorted(lst) to get a new list."}]}}

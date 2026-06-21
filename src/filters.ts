@@ -2,23 +2,29 @@ import type { ConversationMeta, Include, SortOrder } from "./types";
 
 export function applySort(metas: ConversationMeta[], order: SortOrder): ConversationMeta[] {
   const out = [...metas];
+  // Tie-break by id (the file path) so the order is fully deterministic and does
+  // not depend on input order. This matters because metas can arrive in
+  // different orders (filesystem discovery vs. an SQLite query), and a tie on
+  // the primary key would otherwise resolve differently between them.
+  const tie = (a: ConversationMeta, b: ConversationMeta) => a.id.localeCompare(b.id);
   switch (order) {
     case "recent":
-      out.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      out.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || tie(a, b));
       break;
     case "oldest":
-      out.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      out.sort((a, b) => a.timestamp.localeCompare(b.timestamp) || tie(a, b));
       break;
     case "messages-desc":
-      out.sort((a, b) => b.messageCount - a.messageCount);
+      out.sort((a, b) => b.messageCount - a.messageCount || tie(a, b));
       break;
     case "messages-asc":
-      out.sort((a, b) => a.messageCount - b.messageCount);
+      out.sort((a, b) => a.messageCount - b.messageCount || tie(a, b));
       break;
     case "alpha":
       out.sort((a, b) => {
         const cmp = a.projectName.localeCompare(b.projectName);
-        return cmp !== 0 ? cmp : a.preview.localeCompare(b.preview);
+        if (cmp !== 0) return cmp;
+        return a.preview.localeCompare(b.preview) || tie(a, b);
       });
       break;
   }

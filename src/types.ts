@@ -39,10 +39,19 @@ export interface MessageSnapshot {
   timestamp: string;
 }
 
+export type ProviderName = "claude-code" | "codex-cli";
+
 export interface ConversationMeta {
   id: string;
   filePath: string;
   sessionId: string;
+  // Which provider produced this meta. Optional/additive: existing claude-code
+  // metas default to "claude-code" when unset.
+  provider?: ProviderName;
+  // Distinguishes plain chat conversations from task-oriented logs (Codex).
+  kind?: "conversation" | "task";
+  // Provider-native session id when it differs from the (non-unique) sessionId.
+  externalSessionId?: string;
   sessionName: string;
   projectPath: string;
   projectName: string;
@@ -83,6 +92,11 @@ export interface FileStatEntry {
 
 export interface ScanOptions {
   profiles?: Profile[];
+  // Providers to scan. Defaults to ["claude-code"]. Including "codex-cli"
+  // requires codexRoots (no default home scan).
+  providers?: ProviderName[];
+  // Absolute roots to discover Codex CLI history under (e.g. ~/.codex/sessions).
+  codexRoots?: string[];
   tier?: string;
   tiers?: Record<string, ContentTier>;
   include?: Include;
@@ -108,6 +122,8 @@ export interface ScanResult {
 
 export interface SearchOptions extends ScanOptions {
   fields?: string[];
+  // Restrict results to one provider.
+  provider?: ProviderName;
 }
 
 export interface SearchMatch {

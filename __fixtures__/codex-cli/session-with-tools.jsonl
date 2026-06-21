@@ -1,0 +1,8 @@
+{"timestamp":"2026-06-19T09:00:00.000Z","type":"session_meta","payload":{"id":"sess-tools-0002","timestamp":"2026-06-19T09:00:00.000Z","cwd":"/Users/dev/projects/api-server","model_provider":"openai","git":{"branch":"feat/search","commit_hash":"def456"}}}
+{"timestamp":"2026-06-19T09:00:01.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}
+{"timestamp":"2026-06-19T09:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Find all TODO comments in the repo."}]}}
+{"timestamp":"2026-06-19T09:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"grep -rn TODO .\"}"}}
+{"timestamp":"2026-06-19T09:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"src/main.ts:42: // TODO: cache this"}}
+{"timestamp":"2026-06-19T09:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"web_search","arguments":"{\"q\":\"grep recursive\"}"}}
+{"timestamp":"2026-06-19T09:00:06.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking"}]}}
+{"timestamp":"2026-06-19T09:00:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Found one TODO in src/main.ts at line 42 about caching."}]}}

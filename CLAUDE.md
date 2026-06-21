@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- `npm test` — run all tests (vitest, 124 tests across 12 files)
+- `npm test` — run all tests (vitest)
 - `npm run lint` — type-check + Biome lint (`tsc --noEmit && npx biome check .`)
 - `npm run format` — auto-format all files (`npx biome format --write .`)
 - `npm run check` — lint + format with auto-fix (`npx biome check --write .`)
-- `npm run build` — produces `dist/` via tsup (ESM + CJS + types). Also runs automatically as `prepare` when this repo is installed as a git URL dependency.
+- `npm run build` — produces `dist/` via tsup (ESM + CJS + types). Also runs automatically as `prepare`.
 - Single test: `npx vitest run __tests__/parser.test.ts`
 
 ## Architecture
@@ -24,15 +24,34 @@ The library and CLI are built as separate tsup entries — `src/index.ts` produc
 Key modules and their responsibilities:
 - `discovery.ts` — fast-glob `**/*.jsonl` with `/memory/` and `/tool-results/` exclusions
 - `parser.ts` — JSONL line-by-line streaming with `parseMeta()` (lightweight) and `parseConversation()` (full)
-- `indexer.ts` — FlexSearch document index across all metadata fields
+- `indexer.ts` — FlexSearch document index across all metadata fields (legacy in-memory search)
 - `filters.ts` — immutable sort/filter/pagination (returns new arrays, never mutates)
-- `scanner.ts` — orchestrator that wires discovery → parser → indexer with batching and caching
+- `scanner.ts` — orchestrator/facade. Persistent (SQLite) by default; pass `persistent: false` for the legacy in-memory path
+- `providers/` — `ScannerProvider` abstraction (discover/canParse/reduce/finalize). `ThreadbaseProvider` wraps the shared `metadata-reducer` (no duplication); `CodexCliProvider` parses local OpenAI Codex CLI rollout sessions into the same `ConversationMeta` model
+
+### Providers (`src/providers/`)
+
+Both the Claude/Threadbase format and local Codex CLI history flow through one normalized provider pipeline. Codex is **opt-in** via `scan({ providers: ['claude-code', 'codex-cli'], codexRoots: [...] })` — no home directory is scanned by default; `codexRoots` must be absolute.
+
+**Codex is indexed in both the in-memory and SQLite persistent engines.** A persistent-mode scan/search with `providers: ['codex-cli']` + `codexRoots` discovers Codex files through the `CodexCliProvider`, reduces them via the shared provider pipeline, and upserts them into the same `conversations`/FTS tables as Threadbase. Threadbase files keep the byte-offset-resumable incremental fold; Codex files reparse from offset 0 on each change (rollout sessions are small — see the `ponytail:` note in `index-engine.ts` for the upgrade path). Persisted rows carry a `provider` column (schema v3); canonical identity is `(provider, absolute_path)` and `session_id` stays non-unique, resolved newest-timestamp-first.
+
+### Persistent engine (`src/persistent/`)
+
+The scanner is **SQLite-backed by default** (`better-sqlite3`, WAL mode). A `ConversationScanner` writes a durable index at `~/.config/threadbase-scanner/index.db` (override with `persistent: { dbPath }`, or the `TB_SCANNER_DB` env var; opt out with `persistent: false` / CLI `--no-persist`).
+
+- `index-engine.ts` — discover → classify → tail-read → upsert; queries read straight from SQLite
+- `cursor.ts` + `jsonl-tail-reader.ts` — byte-offset incremental indexing: an appended file re-reads only the new bytes (O(Δ)); truncate/replace reindexes from 0
+- `metadata-reducer.ts` / `conversation-reducer.ts` — serializable per-line folds shared by `parser.ts` and the incremental/bounded readers (so a streamed parse and a resumed parse are identical by construction)
+- `paged-reader.ts` + `message_checkpoints` — bounded `getConversationPage` that seeks from the nearest checkpoint and reads only the window
+- `repositories/fts.repo.ts` — SQLite FTS5 search backend (persistent-mode `search()`)
+- `sidecar.ts` — optional `<file>.idx.json` (off by default, `persistent: { sidecar: true }`)
+- `src/watcher/` — optional chokidar watcher + debounced single-writer index queue + periodic rescan backstop; emits `change`/`error` events (`scanner.watch()` / `on()`)
+
+Parity is enforced: `__tests__/persistent-scan.test.ts` asserts identical `ScanResult` between the persistent and legacy paths across the option matrix.
 
 ### Distribution model
 
-This package is consumed via **npm's git URL dependency** mechanism, not via npm publish. Consumers declare `"@threadbase/scanner": "github:RonenMars/threadbase-scanner#<tag>"` in their `package.json`. On install, npm clones this repo at the specified tag, runs `prepare` (which runs `npm run build` → `tsup`), and the resulting `dist/` is what consumers `require`/`import`.
-
-`dist/` is gitignored — it's only ever produced by the `prepare` script during install (or by hand during local development). The `prepare` script is what makes this distribution model work.
+Published to **public npm** as `@threadbase-sh/scanner` (semantic-release). `dist/` is gitignored and built by the `prepare` script. Note `better-sqlite3` is a native dependency (ships prebuilt binaries; falls back to node-gyp).
 
 A previous attempt at publishing to npm with V8 bytecode (`bytenode`) protection was abandoned after discovering bytenode `.jsc` files are not cross-platform. See `docs/plans/bytenode-npm-package.md` for the full lessons-learned record.
 

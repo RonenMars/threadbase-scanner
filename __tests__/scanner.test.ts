@@ -301,7 +301,10 @@ describe("ConversationScanner", () => {
       const scanner = new ConversationScanner();
       await scanner.scan({ profiles: [profile] });
 
-      const before = await scanner.getConversation("sess-1");
+      // Resolve by the file-path id (the canonical, unambiguous id). sessionId
+      // "sess-1" is shared with session2.jsonl, and resolution is newest-first
+      // by timestamp, so a sessionId lookup would pick the unrelated newer file.
+      const before = await scanner.getConversation(filePath());
       expect(before?.messageCount).toBe(2);
 
       writeFileSync(
@@ -318,7 +321,7 @@ describe("ConversationScanner", () => {
       expect(meta?.messageCount).toBe(4);
 
       // The stale parsed conversation must be evicted so the next read re-parses.
-      const after = await scanner.getConversation("sess-1");
+      const after = await scanner.getConversation(filePath());
       expect(after?.messageCount).toBe(4);
       expect(after?.messages.at(-1)?.text).toContain("the real latest message");
     });
@@ -352,7 +355,13 @@ describe("ConversationScanner", () => {
 
       expect(meta).toBeNull();
       expect(scanner.getMetadataCache().has(filePath())).toBe(false);
-      expect(await scanner.getConversation("sess-1")).toBeNull();
+      // The dropped file is no longer resolvable by its (path) id.
+      expect(await scanner.getConversation(filePath())).toBeNull();
+      // session2.jsonl shares sessionId "sess-1" and is still active, so the
+      // convenience sessionId lookup deterministically resolves to it rather
+      // than to the dropped file. (session_id is not unique — see schema.)
+      const bySession = await scanner.getConversation("sess-1");
+      expect(bySession?.filePath).toContain("session2.jsonl");
     });
 
     it("returns null for a path that was never scanned", async () => {
@@ -360,6 +369,44 @@ describe("ConversationScanner", () => {
       await scanner.scan({ profiles: [profile] });
       const meta = await scanner.refreshFile(join(tempDir, "projects", "nope", "ghost.jsonl"));
       expect(meta).toBeNull();
+    });
+  });
+
+  describe("duplicate session ids", () => {
+    // session1.jsonl and session2.jsonl in this suite both use sessionId
+    // "sess-1". session_id is not unique (parser falls back to basename;
+    // resumed/subagent sessions repeat ids), so the collision-safe lookup must
+    // surface every active match while getConversation stays a single result.
+    const session1 = () => join(tempDir, "projects", "my-project", "session1.jsonl");
+
+    it("getConversationsBySessionId returns all active matches", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+      const all = scanner.getConversationsBySessionId("sess-1");
+      const names = all.map((m) => m.filePath).sort();
+      expect(names.some((n) => n.includes("session1.jsonl"))).toBe(true);
+      expect(names.some((n) => n.includes("session2.jsonl"))).toBe(true);
+      expect(all).toHaveLength(2);
+    });
+
+    it("getConversation resolves a shared sessionId to one deterministic match", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+      const a = await scanner.getConversation("sess-1");
+      const b = await scanner.getConversation("sess-1");
+      expect(a?.filePath).toBe(b?.filePath); // stable
+    });
+
+    it("dropping one file leaves the other resolvable by sessionId", async () => {
+      const scanner = new ConversationScanner();
+      await scanner.scan({ profiles: [profile] });
+
+      writeFileSync(session1(), "");
+      await scanner.refreshFile(session1());
+
+      const all = scanner.getConversationsBySessionId("sess-1");
+      expect(all).toHaveLength(1);
+      expect(all[0].filePath).toContain("session2.jsonl");
     });
   });
 });
