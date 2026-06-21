@@ -39,7 +39,7 @@ export interface MessageSnapshot {
   timestamp: string;
 }
 
-export type ProviderName = "threadbase" | "codex-cli";
+export type ProviderName = "claude-code" | "codex-cli";
 
 export interface ConversationMeta {
   id: string;

@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import { CLAUDE_CODE_PROVIDER } from "../../providers/provider";
 import type { ConversationMeta, MessageSender, ProviderName } from "../../types";
 
 export interface ConversationRow {
@@ -40,7 +41,7 @@ export function rowToMeta(row: ConversationRow): ConversationMeta {
   return {
     id: row.source_path,
     filePath: row.source_path,
-    provider: (row.provider as ProviderName) ?? "threadbase",
+    provider: (row.provider as ProviderName) ?? CLAUDE_CODE_PROVIDER,
     kind: (row.kind as ConversationMeta["kind"]) ?? undefined,
     externalSessionId: row.external_session_id ?? undefined,
     sessionId: row.session_id,
@@ -132,7 +133,7 @@ export class ConversationsRepo {
       .run({
         file_id: fileId,
         source_path: meta.id,
-        provider: meta.provider ?? "threadbase",
+        provider: meta.provider ?? CLAUDE_CODE_PROVIDER,
         kind: meta.kind ?? null,
         external_session_id: meta.externalSessionId ?? null,
         session_id: meta.sessionId,

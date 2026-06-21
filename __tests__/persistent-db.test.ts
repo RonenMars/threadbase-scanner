@@ -16,7 +16,7 @@ function sampleMeta(overrides: Partial<ConversationMeta> = {}): ConversationMeta
   return {
     id: "/abs/proj/sess.jsonl",
     filePath: "/abs/proj/sess.jsonl",
-    provider: "threadbase",
+    provider: "claude-code",
     sessionId: "sess-1",
     sessionName: "my-session",
     projectPath: "/abs/proj",
@@ -94,8 +94,8 @@ describe("persistent db scaffolding", () => {
       v1.close();
     }
 
-    // openDatabase runs migrations. The pre-existing row must survive and gain a
-    // provider defaulting to 'threadbase'.
+    // openDatabase runs migrations. The pre-existing row must survive and be
+    // updated to 'claude-code' by the v2→v3 migration.
     const db = openDatabase(dbPath);
     expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
     const row = db
@@ -104,7 +104,7 @@ describe("persistent db scaffolding", () => {
       )
       .get("/abs/legacy.jsonl") as Record<string, unknown>;
     expect(row.message_count).toBe(7);
-    expect(row.provider).toBe("threadbase");
+    expect(row.provider).toBe("claude-code");
     expect(row.kind).toBeNull();
     expect(row.external_session_id).toBeNull();
     db.close();

@@ -12,7 +12,7 @@
 // file's absolute_path (and conversations.file_id).
 
 // Bumped whenever DDL below changes; drives migrations.ts via PRAGMA user_version.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   source_path TEXT NOT NULL UNIQUE,
   -- Which provider produced this row. Canonical identity is (provider,
   -- source_path); session_id stays non-unique across providers too.
-  provider TEXT NOT NULL DEFAULT 'threadbase',
+  provider TEXT NOT NULL DEFAULT 'claude-code',
   kind TEXT,
   external_session_id TEXT,
   session_id TEXT NOT NULL,

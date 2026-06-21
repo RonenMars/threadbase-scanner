@@ -4,7 +4,7 @@ import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
 import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
 import { parseMetaWithProvider } from "../providers/parse";
-import type { ScannerProvider } from "../providers/provider";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ScannerProvider } from "../providers/provider";
 import { resolveTier } from "../tiers";
 import type {
   ConversationMeta,
@@ -65,7 +65,7 @@ export class PersistentEngine {
     const log = getLogger();
     const tier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    const enabled = options.providers ?? ["threadbase"];
+    const enabled = options.providers ?? [CLAUDE_CODE_PROVIDER];
     log.info({ enabled, activeProfiles: activeProfiles.length, codexRoots: options.codexRoots }, "indexAll: started");
 
     // Each discovered file carries the provider that should parse it. Threadbase
@@ -73,7 +73,7 @@ export class PersistentEngine {
     // (opt-in, only under explicit codexRoots) reparse from offset 0.
     const discovered: { filePath: string; account: string; provider?: ScannerProvider }[] = [];
 
-    if (enabled.includes("threadbase")) {
+    if (enabled.includes(CLAUDE_CODE_PROVIDER)) {
       log.info({ profileCount: activeProfiles.length }, "indexAll: discovering threadbase files");
       const configDirs = activeProfiles.map((p) => ({
         projectsDir: getProjectsDir(p),
@@ -86,14 +86,14 @@ export class PersistentEngine {
     }
 
     const codex = new CodexCliProvider();
-    if (enabled.includes("codex-cli") && (options.codexRoots?.length ?? 0) > 0) {
+    if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
       log.info({ codexRoots: options.codexRoots }, "indexAll: discovering codex files");
       for (const f of await codex.discover(options.codexRoots as string[])) {
         discovered.push({ ...f, provider: codex });
       }
       log.info({ totalAfterCodex: discovered.length }, "indexAll: codex discovery complete");
     } else {
-      log.info({ codexEnabled: enabled.includes("codex-cli"), codexRootsLen: options.codexRoots?.length ?? 0 }, "indexAll: codex provider skipped");
+      log.info({ codexEnabled: enabled.includes(CODEX_CLI_PROVIDER), codexRootsLen: options.codexRoots?.length ?? 0 }, "indexAll: codex provider skipped");
     }
     log.info({ totalDiscovered: discovered.length }, "indexAll: discovery complete, starting index loop");
     let scanned = 0;
@@ -179,7 +179,7 @@ export class PersistentEngine {
     // so a full reparse is cheap; the resumable-fold path stays Threadbase-only.
     // Upgrade path if Codex files ever get large: give CodexAccumulator the same
     // serialized-reducer-state treatment and route it through tailReduce.
-    if (provider && provider.name !== "threadbase") {
+    if (provider && provider.name !== CLAUDE_CODE_PROVIDER) {
       return this.indexFileWithProvider(provider, filePath, account, tier, stat, resolveGitBranch);
     }
 

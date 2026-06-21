@@ -28,7 +28,10 @@ export interface ScannerProvider<Acc = unknown> {
   finalize(acc: Acc, filePath: string, account: string, tier: ContentTier): ConversationMeta | null;
 }
 
-export type ScannerProviderName = "threadbase" | "codex-cli";
+export const CLAUDE_CODE_PROVIDER = "claude-code" as const;
+export const CODEX_CLI_PROVIDER = "codex-cli" as const;
+
+export type ScannerProviderName = typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER;
 
 export interface DiscoveredConversationFile {
   filePath: string;

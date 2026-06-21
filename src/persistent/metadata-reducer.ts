@@ -7,6 +7,7 @@ import {
   isOnlyToolResultContent,
   isTeammateContent,
 } from "../parser";
+import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
 import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
 
 // Serializable fold state for incremental metadata indexing. parseMeta()'s
@@ -164,7 +165,7 @@ export function finalizeMeta(
   return {
     id: filePath,
     filePath,
-    provider: "threadbase",
+    provider: CLAUDE_CODE_PROVIDER,
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
     sessionName: state.sessionName,
     projectPath,

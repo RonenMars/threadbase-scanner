@@ -6,14 +6,14 @@ import {
   reduceLine,
 } from "../persistent/metadata-reducer";
 import type { ContentTier, ConversationMeta } from "../types";
-import type { DiscoveredConversationFile, ScannerProvider } from "./provider";
+import { CLAUDE_CODE_PROVIDER, type DiscoveredConversationFile, type ScannerProvider } from "./provider";
 
 // The existing Claude/Threadbase format, expressed as a provider. All behavior
 // is the already-shared reducer (metadata-reducer.ts) — no logic is duplicated
 // here. Discovery is delegated to discoverJsonlFiles; the scanner passes the
 // profiles' projects dirs as roots paired with their account ids.
 export class ThreadbaseProvider implements ScannerProvider<ReducerState> {
-  readonly name = "threadbase" as const;
+  readonly name = CLAUDE_CODE_PROVIDER;
 
   // Roots are passed as "<projectsDir>\0<account>" so the scanner can carry the
   // per-root account through the shared interface. The scanner builds these.

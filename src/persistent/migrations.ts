@@ -16,7 +16,7 @@ export function runMigrations(db: Database): void {
   // v1 → v2: add provider columns to a pre-existing conversations table BEFORE
   // running SCHEMA_SQL, because SCHEMA_SQL now creates indexes on those columns.
   // CREATE TABLE IF NOT EXISTS can't add columns, so ALTER the existing one.
-  // Non-destructive: existing rows keep their data and default to 'threadbase'.
+  // Keep the historical DEFAULT 'threadbase' — v2→v3 below backfills these rows.
   // Guarded on table existence so a fresh DB (table created by SCHEMA_SQL below)
   // skips this entirely.
   if (current >= 1 && current < 2 && tableExists(db, "conversations")) {
@@ -30,6 +30,11 @@ export function runMigrations(db: Database): void {
     ] as const) {
       if (!hasColumn(db, "conversations", col)) db.exec(ddl);
     }
+  }
+
+  // v2 → v3: rename provider 'threadbase' → 'claude-code'. Idempotent.
+  if (current >= 1 && current < 3 && tableExists(db, "conversations")) {
+    db.exec("UPDATE conversations SET provider = 'claude-code' WHERE provider = 'threadbase'");
   }
 
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates

@@ -22,7 +22,7 @@ import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
 import { parseMetaWithProvider } from "./providers/parse";
-import type { ScannerProvider } from "./providers/provider";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ScannerProvider } from "./providers/provider";
 import { ThreadbaseProvider } from "./providers/threadbase";
 import { generateMatches } from "./search-matches";
 import { resolveTier } from "./tiers";
@@ -391,7 +391,7 @@ export class ConversationScanner {
       results = results.filter((r) => r.meta.account === options.account);
     }
     if (options.provider) {
-      results = results.filter((r) => (r.meta.provider ?? "threadbase") === options.provider);
+      results = results.filter((r) => (r.meta.provider ?? CLAUDE_CODE_PROVIDER) === options.provider);
     }
     if (options.since) {
       const cutoff = parseSinceCutoff(options.since);
@@ -766,17 +766,17 @@ export class ConversationScanner {
     activeProfiles: Profile[],
     options: ScanOptions,
   ): Promise<{ filePath: string; account: string; provider: ScannerProvider }[]> {
-    const enabled = options.providers ?? ["threadbase"];
+    const enabled = options.providers ?? [CLAUDE_CODE_PROVIDER];
     const work: { filePath: string; account: string; provider: ScannerProvider }[] = [];
 
-    if (enabled.includes("threadbase")) {
+    if (enabled.includes(CLAUDE_CODE_PROVIDER)) {
       const provider = new ThreadbaseProvider();
       const roots = activeProfiles.map((p) => `${getProjectsDir(p)}\0${p.id}`);
       for (const f of await provider.discover(roots)) {
         work.push({ ...f, provider });
       }
     }
-    if (enabled.includes("codex-cli") && (options.codexRoots?.length ?? 0) > 0) {
+    if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
       const provider = new CodexCliProvider();
       for (const f of await provider.discover(options.codexRoots as string[])) {
         work.push({ ...f, provider });

@@ -121,7 +121,7 @@ describe("Scanner with Codex provider", () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].meta.provider).toBe("codex-cli");
 
-    const none = await scanner.search("Python", { provider: "threadbase" });
+    const none = await scanner.search("Python", { provider: "claude-code" });
     expect(none.length).toBe(0);
   });
 
