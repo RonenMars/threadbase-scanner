@@ -1,3 +1,9 @@
+## [0.8.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.0...v0.8.1) (2026-06-21)
+
+### Bug Fixes
+
+* **scanner:** treat empty profiles array as scan-none not load-defaults ([#32](https://github.com/RonenMars/threadbase-scanner/issues/32)) ([52d1ee1](https://github.com/RonenMars/threadbase-scanner/commit/52d1ee18f2d0ecf3e93c6d2f7425bab6e2ef177a))
+
 ## [0.8.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.7.2...v0.8.0) (2026-06-21)
 
 ### Features
