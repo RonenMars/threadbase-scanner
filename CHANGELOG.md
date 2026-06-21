@@ -1,3 +1,14 @@
+## [0.8.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.7.2...v0.8.0) (2026-06-21)
+
+### Features
+
+* **release:** publish @threadbase-sh/scanner to public npm ([#23](https://github.com/RonenMars/threadbase-scanner/issues/23)) ([0d83a27](https://github.com/RonenMars/threadbase-scanner/commit/0d83a27d3a703984a19d107d75bfba9f9f53872f))
+* SQLite persistent engine + add Codex as a new local conversations provider  ([#30](https://github.com/RonenMars/threadbase-scanner/issues/30)) ([56d220b](https://github.com/RonenMars/threadbase-scanner/commit/56d220bd9e6ddce8c51fe4231a5c0374ea2fbfb1)), closes [#29](https://github.com/RonenMars/threadbase-scanner/issues/29) [#27](https://github.com/RonenMars/threadbase-scanner/issues/27) [#25](https://github.com/RonenMars/threadbase-scanner/issues/25) [#26](https://github.com/RonenMars/threadbase-scanner/issues/26) [#28](https://github.com/RonenMars/threadbase-scanner/issues/28) [#25](https://github.com/RonenMars/threadbase-scanner/issues/25) [#26](https://github.com/RonenMars/threadbase-scanner/issues/26) [#27](https://github.com/RonenMars/threadbase-scanner/issues/27) [#28](https://github.com/RonenMars/threadbase-scanner/issues/28) [#29](https://github.com/RonenMars/threadbase-scanner/issues/29)
+
+### Bug Fixes
+
+* **release:** commit-analysis-only precheck + OIDC trusted publishing ([#31](https://github.com/RonenMars/threadbase-scanner/issues/31)) ([3fa4cc0](https://github.com/RonenMars/threadbase-scanner/commit/3fa4cc00875566a8eead793b46c534316e59e4cb)), closes [#30](https://github.com/RonenMars/threadbase-scanner/issues/30)
+
 ## [0.7.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.7.1...v0.7.2) (2026-06-18)
 
 ### Performance Improvements
