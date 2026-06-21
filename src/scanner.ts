@@ -843,7 +843,11 @@ export class ConversationScanner {
   }
 
   private async resolveProfiles(profiles?: Profile[]): Promise<Profile[]> {
-    if (profiles && profiles.length > 0) return profiles;
+    // An explicit array (including an empty one) means "use exactly these" —
+    // `[]` scans zero profiles. Only an absent argument falls back to defaults.
+    // Treating `[]` as "load defaults" silently scanned the real ~/.claude
+    // history, which looked like a hang for callers isolating from it.
+    if (profiles) return profiles;
     return loadProfiles(DEFAULT_CONFIG_PATH);
   }
 

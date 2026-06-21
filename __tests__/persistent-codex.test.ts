@@ -147,6 +147,24 @@ describe("persistent SQLite Codex indexing", () => {
     scanner.close();
   });
 
+  it("claude-code with empty profiles resolves fast (no fallback to real ~/.claude)", async () => {
+    // Regression: `profiles: []` used to fall through to loadProfiles(), which
+    // scans the real ~/.claude history — appearing to hang. An explicit empty
+    // array must mean "scan zero claude-code profiles".
+    const scanner = newScanner();
+    const start = Date.now();
+    const result = await scanner.scan({
+      profiles: [],
+      providers: ["claude-code", "codex-cli"],
+      codexRoots: [codexRoot],
+    });
+    expect(Date.now() - start).toBeLessThan(5000);
+    const convos = result.conversations as ConversationMeta[];
+    expect(convos.every((c) => c.provider === "codex-cli")).toBe(true);
+    expect(convos.length).toBe(2);
+    scanner.close();
+  });
+
   it("persistent search finds Codex text and filters by provider", async () => {
     const scanner = newScanner();
     await scanner.scan({ profiles: [], providers: ["codex-cli"], codexRoots: [codexRoot] });
