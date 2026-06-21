@@ -15,7 +15,9 @@ jobs:
     name: Precheck
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      # Read-only: the precheck only inspects git history to decide whether a
+      # release is warranted. It does not push, publish, or contact npm/OIDC.
+      contents: read
     outputs:
       should_release: ${{ steps.precheck.outputs.should_release }}
       next_version: ${{ steps.precheck.outputs.next_version }}
@@ -32,23 +34,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Dry-run semantic-release
+      - name: Decide whether a release is needed
         id: precheck
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          npx semantic-release --dry-run 2>&1 | tee /tmp/sr.log || true
-          if grep -qE 'The next release version is ' /tmp/sr.log; then
-            VERSION=$(grep -E 'The next release version is ' /tmp/sr.log | tail -n1 | sed -E 's/.*The next release version is ([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?).*/\1/')
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "next_version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "✅ Would release v$VERSION"
-          else
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "next_version=" >> "$GITHUB_OUTPUT"
-            echo "ℹ️  No release-worthy commits — skipping publish."
-          fi
+        # Deliberately NOT `semantic-release --dry-run`: that loads every plugin
+        # and runs their verifyConditions first, and @semantic-release/npm's
+        # verifyConditions performs the npm OIDC token exchange even in dry-run.
+        # That would couple this read-only decision to publish credentials and
+        # force `id-token: write` onto a job that publishes nothing.
+        #
+        # release-precheck.mjs calls ONLY @semantic-release/commit-analyzer with
+        # the same rules from .releaserc.json — no publishing plugins, no npm or
+        # OIDC auth. It writes should_release/next_version to $GITHUB_OUTPUT.
+        run: node scripts/release-precheck.mjs
 
   release:
     name: Release
@@ -61,6 +58,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,7 +76,6 @@ jobs:
       - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_PAT || secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx semantic-release
 
       - name: Notify streamer
