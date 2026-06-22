@@ -177,4 +177,31 @@ describe("persistent SQLite Codex indexing", () => {
     expect(none.length).toBe(0);
     scanner.close();
   });
+
+  it("getConversationPage returns Codex messages equal to getConversation().messages", async () => {
+    const scanner = newScanner();
+    await scanner.scan({ profiles: [], providers: ["codex-cli"], codexRoots: [codexRoot] });
+    const path = join(codexRoot, "2026", "06", "18", "rollout-tools.jsonl");
+
+    const full = await scanner.getConversation(path);
+    expect(full).not.toBeNull();
+    const all = full?.messages ?? [];
+    expect(all.length).toBeGreaterThan(1);
+
+    // The newest page (beforeIndex = total) must return every message, fromIndex 0.
+    const page = await scanner.getConversationPage(path, {
+      beforeIndex: all.length,
+      limit: 50,
+    });
+    expect(page).not.toBeNull();
+    expect(page?.total).toBe(all.length);
+    expect(page?.fromIndex).toBe(0);
+    expect(page?.messages).toEqual(all);
+
+    // A bounded sub-window matches the equivalent slice of the full message list.
+    const sub = await scanner.getConversationPage(path, { beforeIndex: all.length, limit: 1 });
+    expect(sub?.fromIndex).toBe(all.length - 1);
+    expect(sub?.messages).toEqual(all.slice(all.length - 1, all.length));
+    scanner.close();
+  });
 });
