@@ -1,3 +1,9 @@
+## [0.8.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.1...v0.8.2) (2026-06-22)
+
+### Bug Fixes
+
+* **scanner:** serve codex messages from getConversationPage ([#33](https://github.com/RonenMars/threadbase-scanner/issues/33)) ([50c31e1](https://github.com/RonenMars/threadbase-scanner/commit/50c31e1e42f24e8bb4c245062ee3715652020723))
+
 ## [0.8.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.0...v0.8.1) (2026-06-21)
 
 ### Bug Fixes
