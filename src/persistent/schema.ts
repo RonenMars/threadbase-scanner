@@ -12,7 +12,11 @@
 // file's absolute_path (and conversations.file_id).
 
 // Bumped whenever DDL below changes; drives migrations.ts via PRAGMA user_version.
-export const SCHEMA_VERSION = 3;
+// v4: added the scanned_dirs table (dir-mtime discovery gate). runMigrations()
+// early-returns when the stored user_version >= SCHEMA_VERSION, so a new table
+// in SCHEMA_SQL is only reached on an existing DB if this number is bumped —
+// otherwise every DB already at v3 skips the migration and never gets the table.
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (

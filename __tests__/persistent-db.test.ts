@@ -110,6 +110,75 @@ describe("persistent db scaffolding", () => {
     db.close();
   });
 
+  // Regression: the Stage 4 scanned_dirs table was added to SCHEMA_SQL but
+  // SCHEMA_VERSION was left at 3, so runMigrations() early-returns on any DB
+  // already stamped user_version >= 3 (every DB written by scanner <=0.8.x that
+  // then upgraded to 0.9.0) — SCHEMA_SQL never runs, scanned_dirs is never
+  // created, and the next scan throws "no such table: scanned_dirs". Only a
+  // brand-new DB (user_version 0) escaped, which is why the fresh-DB tests
+  // passed. Bumping SCHEMA_VERSION to 4 makes the migration run on those v3 DBs.
+
+  // (a) The actual bug: an existing v3 DB that predates scanned_dirs.
+  it("creates scanned_dirs when upgrading an existing v3 db that lacks it", () => {
+    const dbPath = join(dir, "v3.db");
+    {
+      const v3 = openDatabaseRaw(dbPath);
+      // A minimal v3-shaped DB WITHOUT scanned_dirs, stamped user_version = 3
+      // (the version at which scanned_dirs was supposed to have been added).
+      v3.exec(`CREATE TABLE conversation_files (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, absolute_path TEXT NOT NULL UNIQUE,
+          parent_dir TEXT NOT NULL DEFAULT '', file_name TEXT NOT NULL DEFAULT '',
+          account TEXT NOT NULL DEFAULT 'default', size_bytes INTEGER NOT NULL DEFAULT 0,
+          mtime_ms INTEGER NOT NULL DEFAULT 0, last_indexed_offset INTEGER NOT NULL DEFAULT 0,
+          last_indexed_line INTEGER NOT NULL DEFAULT 0, reducer_state TEXT,
+          content_fingerprint TEXT, status TEXT NOT NULL DEFAULT 'active',
+          last_indexed_at TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT);`);
+      v3.pragma("user_version = 3");
+      const hasBefore = v3
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'scanned_dirs'")
+        .get();
+      expect(hasBefore).toBeUndefined(); // precondition: the table is missing
+      v3.close();
+    }
+
+    // openDatabase runs migrations. With the fix, scanned_dirs now exists.
+    const db = openDatabase(dbPath);
+    expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
+    const hasAfter = db
+      .prepare("SELECT name FROM sqlite_master WHERE name = 'scanned_dirs'")
+      .get() as { name: string } | undefined;
+    expect(hasAfter?.name).toBe("scanned_dirs");
+    // And it's usable — a select against it must not throw.
+    expect(() => db.prepare("SELECT COUNT(*) AS n FROM scanned_dirs").get()).not.toThrow();
+    db.close();
+  });
+
+  // (b) The fresh-DB path still creates scanned_dirs (no regression).
+  it("creates scanned_dirs on a brand-new db", () => {
+    const db = openDatabase(join(dir, "fresh.db"));
+    const has = db.prepare("SELECT name FROM sqlite_master WHERE name = 'scanned_dirs'").get() as
+      | { name: string }
+      | undefined;
+    expect(has?.name).toBe("scanned_dirs");
+    db.close();
+  });
+
+  // (c) An already-migrated DB reopens idempotently — no throw, table intact.
+  it("is idempotent when reopening an already-migrated db with scanned_dirs", () => {
+    const dbPath = join(dir, "reopen.db");
+    const db1 = openDatabase(dbPath);
+    expect(db1.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
+    db1.close();
+
+    const db2 = openDatabase(dbPath);
+    expect(db2.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
+    const has = db2.prepare("SELECT name FROM sqlite_master WHERE name = 'scanned_dirs'").get() as
+      | { name: string }
+      | undefined;
+    expect(has?.name).toBe("scanned_dirs");
+    db2.close();
+  });
+
   it("round-trips a ConversationMeta through upsert -> read identically", () => {
     const db = openDatabase(":memory:");
     const files = new ConversationFilesRepo(db);
