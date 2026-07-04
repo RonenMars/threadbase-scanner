@@ -112,6 +112,11 @@ export interface ScanOptions {
   /** Known file stats from a previous scan. Files whose (mtimeMs, size) match
    *  are skipped — the cached ConversationMeta is reused instead. */
   statCache?: Map<string, { stat: FileStatEntry; meta: ConversationMeta }>;
+  /** Persistent mode only: bypass the dir-mtime discovery gate and force a
+   *  full glob of every profile's projectsDir, ignoring stored watermarks.
+   *  Use for an explicit user-triggered refresh that shouldn't trust the
+   *  gate's optimization. */
+  fullRescan?: boolean;
 }
 
 export interface ScanResult {

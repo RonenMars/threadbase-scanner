@@ -104,4 +104,15 @@ export class ConversationFilesRepo {
       .all() as { absolute_path: string }[];
     return rows.map((r) => r.absolute_path);
   }
+
+  // Active files whose immediate parent is exactly parentDir (no nested
+  // subdirectories). Backs the dir-mtime gate's reuse path: a project dir with
+  // an unchanged mtime and no nested files can skip the glob entirely.
+  activePathsByParentDir(parentDir: string): { absolute_path: string; account: string }[] {
+    return this.db
+      .prepare(
+        "SELECT absolute_path, account FROM conversation_files WHERE parent_dir = ? AND status != 'deleted'",
+      )
+      .all(parentDir) as { absolute_path: string; account: string }[];
+  }
 }
