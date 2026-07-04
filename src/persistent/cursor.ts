@@ -75,6 +75,36 @@ export function classify(
     return { change: "unchanged", stat };
   }
 
-  // Grew past the cursor → append-only fast path.
-  return { change: "appended", stat };
+  // Grew past the cursor. Usually a genuine append — but an atomic replace with
+  // a DIFFERENT, LONGER file also lands here (size > offset, mtime moved). If we
+  // trusted "appended" blindly we'd resume the OLD reducer state and fold only
+  // the new tail, blending two conversations. So re-check the region we already
+  // folded before taking the fast path.
+  //
+  // The stored content_fingerprint was computed as fingerprint(_, size_bytes)
+  // over the old file. It describes the same byte range as fingerprint(current,
+  // last_indexed_offset) ONLY when size_bytes === last_indexed_offset (no
+  // trailing partial line was pending at index time — the normal case). When
+  // that holds and the fingerprints match, we treat it as a real append and
+  // resume the cursor; a mismatch means the indexed region changed → reindex.
+  // When it doesn't hold (a partial line was pending), we can't reconstruct the
+  // stored window, so we reindex to be safe.
+  //
+  // ponytail: fingerprint() only covers the first 4KB + the 4KB ending at the
+  // offset — NOT the whole [0, offset) prefix. So this catches every real atomic
+  // replace (any rewrite changes line 1 → different head 4KB) but NOT a rewrite
+  // that keeps both 8KB windows byte-identical and differs only in the middle.
+  // That's the same bounded ceiling the existing same-size edge-fingerprint has,
+  // accepted by design. Upgrade to a full-prefix hash (or an offset-keyed head
+  // fingerprint column) only if a mid-file-preserving-envelope rewrite is ever
+  // observed in practice — and that same column would also let the pending-
+  // partial-then-grew case resume instead of reindexing.
+  if (
+    existing.content_fingerprint &&
+    existing.size_bytes === existing.last_indexed_offset &&
+    fingerprint(filePath, existing.last_indexed_offset) === existing.content_fingerprint
+  ) {
+    return { change: "appended", stat };
+  }
+  return { change: "reindex", stat };
 }

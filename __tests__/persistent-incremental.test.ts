@@ -8,6 +8,7 @@ import { openDatabase } from "../src/persistent/db";
 import { ConversationFilesRepo } from "../src/persistent/repositories/conversation-files.repo";
 import { ConversationScanner } from "../src/scanner";
 import { resolveTier } from "../src/tiers";
+import type { ConversationMeta } from "../src/types";
 
 // Read the persisted cursor for a file directly from the DB.
 function cursorOf(dbPath: string, filePath: string) {
@@ -151,6 +152,127 @@ describe("incremental byte-offset indexing", () => {
     const completeMeta = await scanner.refreshFile(file);
     expect(completeMeta?.messageCount).toBe(2);
     scanner.close();
+  });
+
+  it("reindexes when replaced in place by a larger, different file (not a blended append)", async () => {
+    // Bug: classify()'s fingerprint guard only fired when the new size EXACTLY
+    // equalled the stored offset, so an atomic replace with DIFFERENT, LONGER
+    // content fell through to the "appended" fast path — resuming the OLD
+    // reducer state and folding only the new tail, blending two conversations.
+    // Exercised via scan() (force=false), the path that classify actually gates;
+    // refreshFile() would mask it by forcing a reindex regardless.
+    //
+    // The fix compares fingerprint(current, offset) — first 4KB + the 4KB ending
+    // at the offset — against the stored fingerprint. It catches every real
+    // rewrite (line 1 changes → different head 4KB), which is what this asserts.
+    // A rewrite preserving BOTH 8KB windows and differing only mid-file is not
+    // detected — the same bounded ceiling as the existing edge-fingerprint, by
+    // design; not exercised here.
+    writeFileSync(
+      file,
+      `${user("2026-01-01T00:00:00.000Z", "OLD conversation content here")}\n${asst("2026-01-01T00:00:01.000Z", "old reply")}\n`,
+    );
+    const scanner = new ConversationScanner({ persistent: { dbPath } });
+    await scanner.scan({ profiles: [{ ...profile(), configDir: dir }] });
+    const oldOffset = cursorOf(dbPath, file)?.last_indexed_offset;
+
+    // Replace in place with an ENTIRELY DIFFERENT, LONGER conversation (new
+    // sessionId, new cwd, more/longer lines). Size grows past the old cursor and
+    // mtime moves, so classify's "grew past cursor" branch is taken.
+    const replacement = [
+      JSON.stringify({
+        type: "user",
+        uuid: "u-new-1",
+        timestamp: "2026-05-01T00:00:00.000Z",
+        sessionId: "sess-NEW",
+        slug: "new-session",
+        cwd: "/home/new",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "completely different opening prompt with lots of words" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a-new-1",
+        timestamp: "2026-05-01T00:00:01.000Z",
+        sessionId: "sess-NEW",
+        message: {
+          role: "assistant",
+          model: "m",
+          content: [
+            { type: "text", text: "a much longer assistant reply than anything in the old file" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        uuid: "u-new-2",
+        timestamp: "2026-05-01T00:00:02.000Z",
+        sessionId: "sess-NEW",
+        message: { role: "user", content: [{ type: "text", text: "second new user turn" }] },
+      }),
+    ].join("\n");
+    writeFileSync(file, `${replacement}\n`);
+    expect(statSync(file).size).toBeGreaterThan(oldOffset ?? 0);
+
+    // Second scan reconciles the replaced file. It must reindex from 0, not
+    // resume the old fold. Assert on the INDEXED ConversationMeta (what the
+    // corruption blends), compared field-for-field against a full parseMeta of
+    // the new file.
+    const s2 = new ConversationScanner({ persistent: { dbPath } });
+    const result = await s2.scan({ profiles: [{ ...profile(), configDir: dir }] });
+    s2.close();
+    scanner.close();
+
+    const metas = result.conversations as ConversationMeta[];
+    expect(metas).toHaveLength(1);
+    const meta = metas[0];
+    const full = await parseMeta(file, "default", resolveTier("standard"));
+
+    // No blend of old sessionId / cwd / count / preview — pure reparse of the new.
+    expect(meta.sessionId).toBe("sess-NEW");
+    expect(meta.projectPath).toBe("/home/new");
+    expect(meta.messageCount).toBe(full?.messageCount);
+    expect(meta.preview).toBe(full?.preview);
+    expect(meta.preview).not.toContain("OLD conversation");
+    // Cursor landed at the new EOF, not the stale old offset.
+    expect(cursorOf(dbPath, file)?.last_indexed_offset).toBe(statSync(file).size);
+  });
+
+  it("still takes the append fast-path for a genuine append via scan()", async () => {
+    // Guard against over-correcting: a real append (same head bytes, more tail)
+    // must still resume from the cursor, not reindex from 0.
+    writeFileSync(
+      file,
+      `${user("2026-01-01T00:00:00.000Z", "genuine first")}\n${asst("2026-01-01T00:00:01.000Z", "reply")}\n`,
+    );
+    const scanner = new ConversationScanner({ persistent: { dbPath } });
+    await scanner.scan({ profiles: [{ ...profile(), configDir: dir }] });
+    const offsetAfterFirst = cursorOf(dbPath, file)?.last_indexed_offset;
+    scanner.close();
+
+    fs.appendFileSync(
+      file,
+      `${user("2026-01-02T00:00:00.000Z", "appended line")}\n${asst("2026-01-02T00:00:01.000Z", "appended reply")}\n`,
+    );
+    const sizeAfter = statSync(file).size;
+
+    const s2 = new ConversationScanner({ persistent: { dbPath } });
+    await s2.scan({ profiles: [{ ...profile(), configDir: dir }] });
+    const meta = await s2.getConversation("sess-inc");
+    s2.close();
+
+    // The cursor advanced to the new EOF (resumed, not reset), the sessionId is
+    // preserved, and the meta equals a full reparse.
+    const c = cursorOf(dbPath, file);
+    expect(c?.last_indexed_offset).toBe(sizeAfter);
+    expect(offsetAfterFirst).toBeLessThan(sizeAfter);
+    const full = await parseMeta(file, "default", resolveTier("standard"));
+    expect(meta?.messageCount).toBe(full?.messageCount);
+    expect(meta?.sessionId).toBe("sess-inc");
   });
 
   it("survives a restart: a new engine resumes from the persisted cursor", async () => {
