@@ -1,4 +1,3 @@
-import { discoverJsonlFiles } from "../discovery";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
@@ -19,6 +18,7 @@ import type {
 } from "../types";
 import { classify, fingerprint } from "./cursor";
 import { type DB, openDatabase } from "./db";
+import { discoverJsonlFilesGated, FULL_RECONCILE_EVERY_N_SCANS } from "./dir-watermark";
 import { type TailReadResult, tailReduce } from "./jsonl-tail-reader";
 import { finalizeMeta, initialReducerState, type ReducerState } from "./metadata-reducer";
 import { buildCheckpoints, CHECKPOINT_INTERVAL, readPage } from "./paged-reader";
@@ -26,6 +26,7 @@ import { CheckpointsRepo } from "./repositories/checkpoints.repo";
 import { ConversationFilesRepo } from "./repositories/conversation-files.repo";
 import { ConversationsRepo } from "./repositories/conversations.repo";
 import { FtsRepo } from "./repositories/fts.repo";
+import { ScannedDirsRepo } from "./repositories/scanned-dirs.repo";
 import { buildSidecar, writeSidecar } from "./sidecar";
 
 const BATCH_SIZE = 12;
@@ -45,9 +46,15 @@ export class PersistentEngine {
   readonly conversations: ConversationsRepo;
   readonly fts: FtsRepo;
   readonly checkpoints: CheckpointsRepo;
+  readonly scannedDirs: ScannedDirsRepo;
   // When true, write a portable <file>.idx.json sidecar next to each indexed
   // JSONL. Off by default.
   private readonly sidecar: boolean;
+  // Counts indexAll() passes so the dir-mtime gate's full-reconcile backstop
+  // (FULL_RECONCILE_EVERY_N_SCANS) can fire periodically. In-memory only: a
+  // restart just means the first few post-restart scans don't force an early
+  // backstop pass, which is harmless (watermarks themselves persist in the DB).
+  private scanCount = 0;
 
   constructor(dbPath: string, options: { sidecar?: boolean } = {}) {
     this.db = openDatabase(dbPath);
@@ -55,6 +62,7 @@ export class PersistentEngine {
     this.conversations = new ConversationsRepo(this.db);
     this.fts = new FtsRepo(this.db);
     this.checkpoints = new CheckpointsRepo(this.db);
+    this.scannedDirs = new ScannedDirsRepo(this.db);
     this.sidecar = options.sidecar ?? false;
   }
 
@@ -81,7 +89,18 @@ export class PersistentEngine {
         projectsDir: getProjectsDir(p),
         account: p.id,
       }));
-      for (const f of await discoverJsonlFiles(configDirs)) discovered.push(f);
+      // Escape hatch: an explicit fullRescan bypasses the dir-mtime gate
+      // entirely — an explicit refresh is precisely the "don't trust the
+      // gate, check for real" signal. Otherwise every FULL_RECONCILE_EVERY_N_SCANS
+      // passes also bypasses it, self-healing any add/remove a filesystem that
+      // doesn't honor directory mtimes might have hidden from the gate.
+      this.scanCount++;
+      const forceFullGlob =
+        options.fullRescan === true || this.scanCount % FULL_RECONCILE_EVERY_N_SCANS === 0;
+      const gated = await discoverJsonlFilesGated(configDirs, this.files, this.scannedDirs, {
+        fullRescan: forceFullGlob,
+      });
+      for (const f of gated) discovered.push(f);
     }
 
     const codex = new CodexCliProvider();

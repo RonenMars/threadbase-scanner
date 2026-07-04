@@ -147,4 +147,22 @@ CREATE TABLE IF NOT EXISTS message_checkpoints (
 
 CREATE INDEX IF NOT EXISTS idx_message_checkpoints_lookup
   ON message_checkpoints(source_path, message_index);
+
+-- Per-directory mtime watermark for the discovery dir-mtime gate (skips the
+-- glob for a directory whose file/subdir SET hasn't changed; never skips
+-- per-file classify()). One row for a profile's projectsDir itself (parent_root
+-- IS NULL) and one row per immediate project subdirectory discovered under it
+-- (parent_root = the projectsDir path). has_nested marks a project dir known to
+-- contain files below its own top level (e.g. subagents/) — those always
+-- re-glob regardless of mtime, since a project-dir-level watermark can't see a
+-- change two levels down.
+CREATE TABLE IF NOT EXISTS scanned_dirs (
+  path TEXT PRIMARY KEY,
+  parent_root TEXT,
+  mtime_ms INTEGER NOT NULL,
+  has_nested INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_scanned_dirs_parent_root ON scanned_dirs(parent_root);
 `;
