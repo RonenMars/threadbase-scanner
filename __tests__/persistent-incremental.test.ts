@@ -2,9 +2,10 @@ import * as fs from "fs";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseMeta } from "../src/parser";
 import { openDatabase } from "../src/persistent/db";
+import * as tailReaderModule from "../src/persistent/jsonl-tail-reader";
 import { ConversationFilesRepo } from "../src/persistent/repositories/conversation-files.repo";
 import { ConversationScanner } from "../src/scanner";
 import { resolveTier } from "../src/tiers";
@@ -152,6 +153,67 @@ describe("incremental byte-offset indexing", () => {
     const completeMeta = await scanner.refreshFile(file);
     expect(completeMeta?.messageCount).toBe(2);
     scanner.close();
+  });
+
+  it("refreshFile() resumes from the cursor on append instead of reparsing from 0", async () => {
+    // Stage 2: refreshFile() used to force=true unconditionally, so the
+    // watcher's live-append path re-read the whole file from byte 0 on every
+    // debounced tick. Now it passes force=false and lets classify() decide —
+    // spy on tailReduce to prove an append resumes from the persisted offset
+    // rather than starting over at 0.
+    writeFileSync(
+      file,
+      `${user("2026-01-01T00:00:00.000Z", "first")}\n${asst("2026-01-01T00:00:01.000Z", "reply")}\n`,
+    );
+    const scanner = new ConversationScanner({ persistent: { dbPath } });
+    await scanner.scan({ profiles: [{ ...profile(), configDir: dir }] });
+    const offsetAfterFirst = cursorOf(dbPath, file)?.last_indexed_offset ?? 0;
+    expect(offsetAfterFirst).toBeGreaterThan(0);
+
+    fs.appendFileSync(
+      file,
+      `${user("2026-01-02T00:00:00.000Z", "second")}\n${asst("2026-01-02T00:00:01.000Z", "reply2")}\n`,
+    );
+
+    const tailReduceSpy = vi.spyOn(tailReaderModule, "tailReduce");
+    const meta = await scanner.refreshFile(file);
+    scanner.close();
+
+    // Called with the PRIOR offset, not 0 — proof the fold resumed rather than
+    // re-reading the whole file.
+    expect(tailReduceSpy).toHaveBeenCalledWith(
+      file,
+      offsetAfterFirst,
+      expect.any(Number),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(meta?.messageCount).toBe(4);
+    tailReduceSpy.mockRestore();
+  });
+
+  it("refreshFile() still reindexes from 0 on truncate/replace", async () => {
+    // Guard against under-correcting: force=false must not turn a genuine
+    // truncate/replace into a bad append — classify() should still say
+    // "reindex" and tailReduce should still be called from offset 0.
+    writeFileSync(
+      file,
+      `${user("2026-01-01T00:00:00.000Z", "one")}\n${asst("2026-01-01T00:00:01.000Z", "two")}\n${user("2026-01-01T00:00:02.000Z", "three")}\n`,
+    );
+    const scanner = new ConversationScanner({ persistent: { dbPath } });
+    await scanner.scan({ profiles: [{ ...profile(), configDir: dir }] });
+
+    // Replace with shorter content (truncation).
+    writeFileSync(file, `${user("2026-02-01T00:00:00.000Z", "fresh start")}\n`);
+
+    const tailReduceSpy = vi.spyOn(tailReaderModule, "tailReduce");
+    const meta = await scanner.refreshFile(file);
+    scanner.close();
+
+    expect(tailReduceSpy).toHaveBeenCalledWith(file, 0, 0, expect.anything(), expect.anything());
+    expect(meta?.messageCount).toBe(1);
+    expect(meta?.preview).toContain("fresh start");
+    tailReduceSpy.mockRestore();
   });
 
   it("reindexes when replaced in place by a larger, different file (not a blended append)", async () => {
