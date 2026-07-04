@@ -1,3 +1,9 @@
+## [0.8.3](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.2...v0.8.3) (2026-07-04)
+
+### Bug Fixes
+
+* **cursor:** reindex on replace-with-larger-different file, not blended append ([#34](https://github.com/RonenMars/threadbase-scanner/issues/34)) ([e4e1533](https://github.com/RonenMars/threadbase-scanner/commit/e4e1533e74872a7d8f53b10989891c1f69609b8b))
+
 ## [0.8.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.1...v0.8.2) (2026-06-22)
 
 ### Bug Fixes
