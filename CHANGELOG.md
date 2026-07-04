@@ -1,3 +1,9 @@
+## [0.8.4](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.3...v0.8.4) (2026-07-04)
+
+### Bug Fixes
+
+* **scanner:** stop forcing refreshFile() to reparse from offset 0 ([#35](https://github.com/RonenMars/threadbase-scanner/issues/35)) ([180f3eb](https://github.com/RonenMars/threadbase-scanner/commit/180f3ebee9bf77468f0876c645f5dbfac4be49a3)), closes [#34](https://github.com/RonenMars/threadbase-scanner/issues/34)
+
 ## [0.8.3](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.2...v0.8.3) (2026-07-04)
 
 ### Bug Fixes
