@@ -533,13 +533,18 @@ export class ConversationScanner {
       // rather than the Threadbase tail-read. Prefer stored metadata; fall back
       // to a structural sniff for a file the index hasn't seen yet.
       const provider = await this.resolveProviderForFile(filePath, previous);
+      // force=false: let classify() decide. It already distinguishes
+      // unchanged/appended/reindex/vanished correctly (including the
+      // replace-with-larger-file case, cursor.ts), so the watcher's live-append
+      // path resumes from the byte cursor instead of reparsing the whole file
+      // on every debounced tick.
       const meta = await engine.indexFile(
         filePath,
         resolvedAccount,
         this.lastTier.name,
         undefined,
         readGitBranch,
-        true,
+        false,
         provider,
       );
       evict(meta);
