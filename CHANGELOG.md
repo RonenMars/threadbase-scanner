@@ -1,3 +1,9 @@
+## [0.9.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.0...v0.9.1) (2026-07-04)
+
+### Bug Fixes
+
+* **migrations:** create scanned_dirs on existing v3 databases ([#37](https://github.com/RonenMars/threadbase-scanner/issues/37)) ([79713a0](https://github.com/RonenMars/threadbase-scanner/commit/79713a037aa80b2086ef872401b0fa04f44c1964))
+
 ## [0.9.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.4...v0.9.0) (2026-07-04)
 
 ### Features
