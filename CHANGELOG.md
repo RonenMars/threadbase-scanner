@@ -1,3 +1,9 @@
+## [0.9.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.4...v0.9.0) (2026-07-04)
+
+### Features
+
+* **scanner:** skip the discovery glob for unchanged project directories ([#36](https://github.com/RonenMars/threadbase-scanner/issues/36)) ([b25652d](https://github.com/RonenMars/threadbase-scanner/commit/b25652d0b36211866cd5cf4bedb3b3348bf98bb4)), closes [#34](https://github.com/RonenMars/threadbase-scanner/issues/34) [#35](https://github.com/RonenMars/threadbase-scanner/issues/35)
+
 ## [0.8.4](https://github.com/RonenMars/threadbase-scanner/compare/v0.8.3...v0.8.4) (2026-07-04)
 
 ### Bug Fixes
