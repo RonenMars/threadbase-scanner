@@ -1,3 +1,9 @@
+## [0.9.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.1...v0.9.2) (2026-07-05)
+
+### Bug Fixes
+
+* **scanner:** await in-flight scan and reconcile before close() shuts the DB ([#38](https://github.com/RonenMars/threadbase-scanner/issues/38)) ([a3e7fee](https://github.com/RonenMars/threadbase-scanner/commit/a3e7fee405ee5662d8029f3e7e1ef5b38e5ce176)), closes [#4](https://github.com/RonenMars/threadbase-scanner/issues/4)
+
 ## [0.9.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.0...v0.9.1) (2026-07-04)
 
 ### Bug Fixes
