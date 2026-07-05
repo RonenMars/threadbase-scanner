@@ -146,8 +146,22 @@ export class PersistentEngine {
     // Reconcile deletions: any previously-active file that wasn't discovered
     // this pass is gone from disk — mark it deleted. This is the correctness
     // backstop for unlink events the watcher may have missed (spec §9.5).
+    //
+    // Scope the reconcile to the accounts THIS scan actually covered. The index
+    // is shared across profiles/accounts (one index.db), so a scan of account A
+    // must not mark account B's files deleted just because B's files weren't in
+    // A's discovered set — B is simply out of this scan's scope, not gone from
+    // disk. Covered = the claude-code profile ids scanned (when that provider is
+    // enabled) plus "codex" (when codex roots were scanned).
+    const coveredAccounts = new Set<string>();
+    if (enabled.includes(CLAUDE_CODE_PROVIDER)) {
+      for (const p of activeProfiles) coveredAccounts.add(p.id);
+    }
+    if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
+      coveredAccounts.add("codex");
+    }
     const seen = new Set(discovered.map((d) => d.filePath));
-    for (const path of this.files.allActivePaths()) {
+    for (const path of this.files.activePathsByAccounts([...coveredAccounts])) {
       if (!seen.has(path)) this.markDeleted(path);
     }
 
