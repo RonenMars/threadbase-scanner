@@ -79,10 +79,22 @@ export async function discoverJsonlFilesGated(
         watermark.has_nested === 0;
 
       if (canReuse) {
-        for (const row of files.activePathsByParentDir(projectDir)) {
-          results.push({ filePath: row.absolute_path, account: row.account });
+        const known = files.activePathsByParentDir(projectDir);
+        // A watermarked, unchanged dir must have had ≥1 indexed file when it was
+        // globbed. Zero known files means the watermark is out of sync with
+        // conversation_files — most often a race: another connection sharing this
+        // index.db committed the scanned_dirs watermark (during its own discovery)
+        // before it finished writing that dir's file rows, and we read in that
+        // window. Trusting the empty reuse would drop the dir's conversations from
+        // `discovered`, so the caller's deletion-reconcile (or a stale allActive)
+        // never surfaces them → 404. Fall through to the glob, which reads the
+        // real on-disk truth and re-indexes what's actually there.
+        if (known.length > 0) {
+          for (const row of known) {
+            results.push({ filePath: row.absolute_path, account: row.account });
+          }
+          continue;
         }
-        continue;
       }
 
       const found = await discoverJsonlFiles([{ projectsDir: projectDir, account }]);
