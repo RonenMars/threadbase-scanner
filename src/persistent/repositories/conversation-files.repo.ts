@@ -105,6 +105,22 @@ export class ConversationFilesRepo {
     return rows.map((r) => r.absolute_path);
   }
 
+  // Active file paths belonging to any of the given accounts. Backs the
+  // deletion-reconcile so a scan that covered only some accounts can't mark
+  // another account's files deleted (they live in the same shared index.db but
+  // a different profile owns them). Returns [] for an empty account list.
+  activePathsByAccounts(accounts: string[]): string[] {
+    if (accounts.length === 0) return [];
+    const placeholders = accounts.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT absolute_path FROM conversation_files
+         WHERE status != 'deleted' AND account IN (${placeholders})`,
+      )
+      .all(...accounts) as { absolute_path: string }[];
+    return rows.map((r) => r.absolute_path);
+  }
+
   // Active files whose immediate parent is exactly parentDir (no nested
   // subdirectories). Backs the dir-mtime gate's reuse path: a project dir with
   // an unchanged mtime and no nested files can skip the glob entirely.
