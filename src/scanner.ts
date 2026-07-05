@@ -110,11 +110,22 @@ export class ConversationScanner {
   private readonly dbPath: string | null;
   private readonly sidecarEnabled: boolean;
   private engineInstance: PersistentEngine | null = null;
+  // The most recent scan()'s promise while it is still running, or null when
+  // idle. close() awaits it before closing the SQLite handle so a fire-and-
+  // forget scan can't have its DB shut mid-indexAll ("database connection is
+  // not open"). Tracks the latest scan only — concurrent scans on one instance
+  // aren't a supported pattern (a single writer DB), and the latest resolving
+  // implies earlier ones already settled in practice.
+  private inFlightScan: Promise<unknown> | null = null;
 
   private emitter = new EventEmitter();
   private watcher: FileWatcher | null = null;
   private queue: IndexQueue | null = null;
   private periodicTimer: ReturnType<typeof setInterval> | null = null;
+  // The in-flight periodicReconcile() job, if one is mid-run. unwatch() awaits
+  // it before dropping the queue/engine so its post-await engine.files access
+  // can't hit a closed DB (the watch-mode half of Bug #4).
+  private inFlightReconcile: Promise<void> | null = null;
 
   constructor(options?: ConversationScannerOptions) {
     this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
@@ -141,15 +152,40 @@ export class ConversationScanner {
   }
 
   // Release the SQLite connection. No-op in legacy mode. Safe to call
-  // repeatedly. Stops the watcher first if one is running; call unwatch()
-  // explicitly beforehand if you need to await watcher teardown.
-  close(): void {
-    if (this.watcher || this.queue || this.periodicTimer) void this.unwatch();
+  // repeatedly. Awaits watcher teardown AND any in-flight scan before closing
+  // the DB handle, so a fire-and-forget scan() can never have its connection
+  // shut mid-indexAll() ("database connection is not open"). This is why close()
+  // is async — callers should await it during shutdown. (Scanner review Bug #4.)
+  async close(): Promise<void> {
+    if (this.watcher || this.queue || this.periodicTimer) await this.unwatch();
+    // Let any running scan finish touching the DB first. Swallow its result/
+    // rejection here — the caller that started the scan owns its outcome; close()
+    // only needs it to stop using the handle before we close it.
+    if (this.inFlightScan) {
+      try {
+        await this.inFlightScan;
+      } catch {
+        // scan failed on its own; close() proceeds to release the handle
+      }
+    }
     this.engineInstance?.close();
     this.engineInstance = null;
   }
 
   async scan(options: ScanOptions = {}): Promise<ScanResult> {
+    // Track this scan so close() can await it before shutting the DB handle.
+    // Cleared on settle — but only if it's still the current one (a newer scan
+    // may have replaced it). Errors propagate to the caller unchanged.
+    const promise = this.runScan(options);
+    this.inFlightScan = promise;
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlightScan === promise) this.inFlightScan = null;
+    }
+  }
+
+  private async runScan(options: ScanOptions): Promise<ScanResult> {
     const profiles = await this.resolveProfiles(options.profiles);
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
     this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);
@@ -697,7 +733,12 @@ export class ConversationScanner {
     const periodicMs = options.periodicMs ?? 60_000;
     if (periodicMs > 0) {
       this.periodicTimer = setInterval(() => {
-        void this.periodicReconcile(activeProfiles);
+        // Track the job so unwatch() can await it — otherwise its post-await
+        // engine.files access can land after the DB is closed.
+        const job = this.periodicReconcile(activeProfiles).finally(() => {
+          if (this.inFlightReconcile === job) this.inFlightReconcile = null;
+        });
+        this.inFlightReconcile = job;
       }, periodicMs);
       // Don't keep the process alive solely for the rescan timer.
       this.periodicTimer.unref?.();
@@ -747,6 +788,11 @@ export class ConversationScanner {
     if (this.periodicTimer) {
       clearInterval(this.periodicTimer);
       this.periodicTimer = null;
+    }
+    // Let a reconcile that already started finish touching the DB before we
+    // drop the queue/engine below. Its own catch swallows errors; we only wait.
+    if (this.inFlightReconcile) {
+      await this.inFlightReconcile;
     }
     if (this.watcher) {
       await this.watcher.stop();
