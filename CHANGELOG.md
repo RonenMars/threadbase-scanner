@@ -1,3 +1,9 @@
+## [0.9.4](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.3...v0.9.4) (2026-07-05)
+
+### Bug Fixes
+
+* **scanner:** re-glob a watermarked dir when its file rows are missing ([#40](https://github.com/RonenMars/threadbase-scanner/issues/40)) ([789875e](https://github.com/RonenMars/threadbase-scanner/commit/789875ee7a3677a9955f925ed7b82e592edeecc7))
+
 ## [0.9.3](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.2...v0.9.3) (2026-07-05)
 
 ### Bug Fixes
