@@ -1,3 +1,9 @@
+## [0.9.3](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.2...v0.9.3) (2026-07-05)
+
+### Bug Fixes
+
+* **scanner:** scope deletion-reconcile to the accounts a scan covered ([#39](https://github.com/RonenMars/threadbase-scanner/issues/39)) ([d903868](https://github.com/RonenMars/threadbase-scanner/commit/d903868ccbed473dc0c68efda6d54fd9a5b74101))
+
 ## [0.9.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.1...v0.9.2) (2026-07-05)
 
 ### Bug Fixes
