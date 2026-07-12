@@ -10,6 +10,11 @@ export { readGitBranch } from "./git";
 export { SearchIndexer } from "./indexer";
 export type { Logger, LoggerOptions } from "./logger";
 export { createLogger, getLogger, setLogger } from "./logger";
+export type { ConvReducerState as JsonlParseState } from "./persistent/conversation-reducer";
+export {
+  initialConvState as createJsonlParseState,
+  parseJsonlLine,
+} from "./persistent/conversation-reducer";
 export type { Sidecar } from "./persistent/sidecar";
 export { readSidecar, sidecarPath } from "./persistent/sidecar";
 export {

@@ -16,7 +16,7 @@ import type {
   Profile,
   ScanOptions,
 } from "../types";
-import { classify, fingerprint } from "./cursor";
+import { classify, type FileChange, fingerprint } from "./cursor";
 import { type DB, openDatabase } from "./db";
 import { discoverJsonlFilesGated, FULL_RECONCILE_EVERY_N_SCANS } from "./dir-watermark";
 import { type TailReadResult, tailReduce } from "./jsonl-tail-reader";
@@ -55,6 +55,9 @@ export class PersistentEngine {
   // restart just means the first few post-restart scans don't force an early
   // backstop pass, which is harmless (watermarks themselves persist in the DB).
   private scanCount = 0;
+  // In-flight checkpoint build/extension per file, so concurrent getPage
+  // callers share one stream instead of each walking the file.
+  private readonly checkpointBuilds = new Map<string, Promise<void>>();
 
   constructor(dbPath: string, options: { sidecar?: boolean } = {}) {
     this.db = openDatabase(dbPath);
@@ -125,7 +128,7 @@ export class PersistentEngine {
       const batch = discovered.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
         batch.map(async ({ filePath, account, provider }) => {
-          const meta = await this.indexFile(
+          const { meta } = await this.indexFile(
             filePath,
             account,
             tier.name,
@@ -173,7 +176,9 @@ export class PersistentEngine {
   // unchanged → return the stored summary; appended → resume the fold and read
   // only new bytes; reindex/force → fold from offset 0. Writes the summary +
   // cursor + reducer state in one transaction so a crash never leaves a
-  // half-written row or an over-advanced cursor.
+  // half-written row or an over-advanced cursor. Returns the classification
+  // alongside the meta so callers (refreshFile) can keep, extend, or evict
+  // their own per-file caches without re-stat'ing the file (racy) themselves.
   async indexFile(
     filePath: string,
     account: string,
@@ -182,7 +187,7 @@ export class PersistentEngine {
     resolveGitBranch: (projectPath: string) => string | null,
     force = false,
     provider?: ScannerProvider,
-  ): Promise<ConversationMeta | null> {
+  ): Promise<{ meta: ConversationMeta | null; change: FileChange }> {
     const log = getLogger();
     const tier = resolveTier(tierName, customTiers);
 
@@ -192,12 +197,12 @@ export class PersistentEngine {
     if (change === "vanished" || !stat) {
       // File gone between discovery and indexing — treat as deleted.
       this.markDeleted(filePath);
-      return null;
+      return { meta: null, change: "vanished" };
     }
     // Unchanged: serve the persisted summary without re-reading (unless a
     // caller forces a re-parse, e.g. refreshFile after a same-size edit).
     if (change === "unchanged" && !force) {
-      return this.conversations.getBySourcePath(filePath);
+      return { meta: this.conversations.getBySourcePath(filePath), change };
     }
 
     // ponytail: Codex reparses from offset 0 on every change rather than
@@ -206,7 +211,15 @@ export class PersistentEngine {
     // Upgrade path if Codex files ever get large: give CodexAccumulator the same
     // serialized-reducer-state treatment and route it through tailReduce.
     if (provider && provider.name !== CLAUDE_CODE_PROVIDER) {
-      return this.indexFileWithProvider(provider, filePath, account, tier, stat, resolveGitBranch);
+      const meta = await this.indexFileWithProvider(
+        provider,
+        filePath,
+        account,
+        tier,
+        stat,
+        resolveGitBranch,
+      );
+      return { meta, change };
     }
 
     // appended → resume the persisted fold from the cursor; reindex/force →
@@ -224,13 +237,13 @@ export class PersistentEngine {
       result = await tailReduce(filePath, startOffset, startLine, state, tier);
     } catch (err) {
       log.warn({ filePath, err }, "persistent: tail read failed");
-      return null;
+      return { meta: null, change };
     }
 
     const meta = finalizeMeta(state, filePath, account, tier);
     if (!meta) {
       this.markDeleted(filePath);
-      return null;
+      return { meta: null, change };
     }
     meta.gitBranch = resolveGitBranch(meta.projectPath);
 
@@ -239,9 +252,10 @@ export class PersistentEngine {
     const upsert = this.db.transaction(() => {
       this.conversations.upsert(fileId, meta, state.pageMessageCount);
       this.fts.upsert(meta);
-      // Byte offsets shift when the file changes, so any checkpoints are stale.
-      // Drop them; they're rebuilt lazily on the next page request.
-      this.checkpoints.remove(filePath);
+      // Checkpoints cover the file's immutable prefix, so an append (a resumed
+      // fold) leaves them valid — drop them only when the fold restarted from
+      // offset 0 (truncate/replace/new). They're rebuilt lazily on page access.
+      if (!resume) this.checkpoints.remove(filePath);
       this.files.updateCursor(fileId, {
         sizeBytes: stat.size,
         mtimeMs: stat.mtimeMs,
@@ -276,7 +290,7 @@ export class PersistentEngine {
       { filePath, change, bytesRead: result.newOffset - startOffset, msgs: meta.messageCount },
       "persistent: indexed file",
     );
-    return meta;
+    return { meta, change };
   }
 
   // Index a non-Threadbase provider file: full reparse from offset 0 through the
@@ -409,14 +423,36 @@ export class PersistentEngine {
     // thinking-only lines).
     const total = this.conversations.pageMessageCount(filePath);
 
-    if (total > CHECKPOINT_INTERVAL && this.checkpoints.count(filePath) === 0) {
-      const built = await buildCheckpoints(filePath);
-      if (built.length > 0) this.checkpoints.replaceAll(filePath, built);
-    }
+    await this.ensureCheckpoints(filePath, total);
 
     const beforeIndex = options.beforeIndex ?? total;
     const fromIndex = Math.max(0, beforeIndex - options.limit);
     const floor = this.checkpoints.floor(filePath, fromIndex);
     return readPage(filePath, total, options, floor);
+  }
+
+  // Build or extend the checkpoint chain so it covers `total` messages. Cold
+  // file → full build; a file that grew → extend from the last persisted
+  // checkpoint (reads only past its offset, never the prefix). Single-flighted
+  // per path: concurrent getPage callers await the same build instead of
+  // streaming the file in parallel.
+  private ensureCheckpoints(filePath: string, total: number): Promise<void> {
+    if (total <= CHECKPOINT_INTERVAL) return Promise.resolve();
+    const inFlight = this.checkpointBuilds.get(filePath);
+    if (inFlight) return inFlight;
+
+    const build = (async () => {
+      const last = this.checkpoints.last(filePath);
+      // Chain already covers every checkpointable index — nothing to do.
+      if (last && total < last.messageIndex + CHECKPOINT_INTERVAL) return;
+      const fresh = await buildCheckpoints(filePath, CHECKPOINT_INTERVAL, last);
+      if (fresh.length === 0) return;
+      if (last) this.checkpoints.append(filePath, fresh);
+      else this.checkpoints.replaceAll(filePath, fresh);
+    })().finally(() => {
+      if (this.checkpointBuilds.get(filePath) === build) this.checkpointBuilds.delete(filePath);
+    });
+    this.checkpointBuilds.set(filePath, build);
+    return build;
   }
 }

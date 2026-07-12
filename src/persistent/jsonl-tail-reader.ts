@@ -1,6 +1,13 @@
 import { createReadStream } from "fs";
+import { setImmediate as yieldToEventLoop } from "timers/promises";
 import type { ContentTier } from "../types";
 import { type ReducerState, reduceLine } from "./metadata-reducer";
+
+// Cooperatively yield every N folded lines so a full parse of a large file
+// (cold index, truncation fallback) never blocks the event loop for its whole
+// duration — buffered stream chunks otherwise drain through microtasks without
+// ever reaching the macrotask queue.
+export const YIELD_EVERY_LINES = 500;
 
 export interface TailReadResult {
   // Byte offset of the first un-consumed byte (start of the trailing partial
@@ -29,6 +36,7 @@ export async function tailReduce(
   let offset = startOffset;
   let line = startLine;
   let parsedLines = 0;
+  let sinceYield = 0;
 
   for await (const chunk of stream) {
     buffer += chunk;
@@ -50,6 +58,10 @@ export async function tailReduce(
 
       offset += Buffer.byteLength(lineWithNewline, "utf8");
       line++;
+      if (++sinceYield >= YIELD_EVERY_LINES) {
+        sinceYield = 0;
+        await yieldToEventLoop();
+      }
     }
   }
 
