@@ -17,6 +17,11 @@ import { readGitBranch } from "./git";
 import { SearchIndexer } from "./indexer";
 import { getLogger } from "./logger";
 import { parseConversation, parseMeta } from "./parser";
+import {
+  type CachedConversation,
+  extendConversation,
+  parseConversationResumable,
+} from "./persistent/conversation-stream";
 import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
@@ -94,7 +99,9 @@ export interface ScannerChangeEvent {
 
 export class ConversationScanner {
   private metadataCache: Map<string, ConversationMeta> = new Map();
-  private conversationLRU: LRUCache<string, Conversation>;
+  // Parsed conversations plus (persistent claude-code entries only) the resume
+  // point that lets refreshFile extend them in place when the file grows.
+  private conversationLRU: LRUCache<string, CachedConversation>;
   // session_id is NOT unique, so this maps a sessionId to every active meta that
   // carries it. Resolution picks deterministically (newest timestamp, then path
   // ascending) so dropping one file never hides another with the same id.
@@ -128,7 +135,9 @@ export class ConversationScanner {
   private inFlightReconcile: Promise<void> | null = null;
 
   constructor(options?: ConversationScannerOptions) {
-    this.conversationLRU = new LRUCache<string, Conversation>(options?.conversationCacheSize ?? 5);
+    this.conversationLRU = new LRUCache<string, CachedConversation>(
+      options?.conversationCacheSize ?? 5,
+    );
     if (options?.persistent === false) {
       this.dbPath = null;
       this.sidecarEnabled = false;
@@ -445,7 +454,7 @@ export class ConversationScanner {
     const cached = this.conversationLRU.get(id);
     if (cached) {
       log.debug({ id }, "getConversation: cache hit");
-      return cached;
+      return cached.conversation;
     }
 
     const meta = this.persistent
@@ -458,12 +467,22 @@ export class ConversationScanner {
 
     log.debug({ id, filePath: meta.filePath }, "getConversation: cache miss, parsing");
     try {
+      // Persistent claude-code files parse through the resumable streaming fold
+      // so the cached entry carries its resume point — refreshFile can then
+      // extend it with only the appended bytes instead of evicting it. Codex
+      // and legacy-mode parses stay on their existing parsers (no resume state;
+      // a refresh evicts them as before).
+      if (this.persistent && meta.provider !== CODEX_CLI_PROVIDER) {
+        const parsed = await parseConversationResumable(meta.filePath, meta.account);
+        if (parsed) this.conversationLRU.set(id, parsed);
+        return parsed?.conversation ?? null;
+      }
       const conversation =
         meta.provider === CODEX_CLI_PROVIDER
           ? await parseCodexConversation(meta.filePath, meta.account)
           : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
-        this.conversationLRU.set(id, conversation);
+        this.conversationLRU.set(id, { conversation });
       }
       return conversation;
     } catch (err) {
@@ -552,19 +571,34 @@ export class ConversationScanner {
   // not seen before. Returns the fresh ConversationMeta, or null when the file
   // no longer parses (missing/empty) — in which case any prior entry for it is
   // dropped from all indexes.
-  async refreshFile(filePath: string, account?: string): Promise<ConversationMeta | null> {
+  //
+  // Single-flighted per path: concurrent callers (stacked client retries, a
+  // watcher tick racing a caller) await the one in-flight refresh instead of
+  // each re-reading the file.
+  private readonly refreshesInFlight = new Map<string, Promise<ConversationMeta | null>>();
+
+  refreshFile(filePath: string, account?: string): Promise<ConversationMeta | null> {
+    const inFlight = this.refreshesInFlight.get(filePath);
+    if (inFlight) return inFlight;
+    const refresh = this.doRefreshFile(filePath, account).finally(() => {
+      if (this.refreshesInFlight.get(filePath) === refresh) {
+        this.refreshesInFlight.delete(filePath);
+      }
+    });
+    this.refreshesInFlight.set(filePath, refresh);
+    return refresh;
+  }
+
+  private async doRefreshFile(
+    filePath: string,
+    account?: string,
+  ): Promise<ConversationMeta | null> {
     const log = getLogger();
 
     if (this.persistent) {
       const engine = this.engine();
       const previous = engine.getByIdOrSession(filePath);
       const resolvedAccount = account ?? previous?.account ?? "default";
-      const evict = (m: ConversationMeta | null) => {
-        if (!m) return;
-        this.conversationLRU.delete(m.id);
-        this.conversationLRU.delete(m.sessionId);
-      };
-      evict(previous);
       // Resolve the provider so a Codex file refreshes through the Codex reducer
       // rather than the Threadbase tail-read. Prefer stored metadata; fall back
       // to a structural sniff for a file the index hasn't seen yet.
@@ -574,7 +608,7 @@ export class ConversationScanner {
       // replace-with-larger-file case, cursor.ts), so the watcher's live-append
       // path resumes from the byte cursor instead of reparsing the whole file
       // on every debounced tick.
-      const meta = await engine.indexFile(
+      const { meta, change } = await engine.indexFile(
         filePath,
         resolvedAccount,
         this.lastTier.name,
@@ -583,8 +617,28 @@ export class ConversationScanner {
         false,
         provider,
       );
-      evict(meta);
-      log.debug({ filePath, kept: !!meta }, "refreshFile: updated persistent index");
+
+      // Cached parses are keyed by whatever id getConversation() was asked for
+      // — the file-path id or the sessionId — so collect every candidate key.
+      const cacheKeys = new Set<string>();
+      for (const m of [previous, meta]) {
+        if (m) {
+          cacheKeys.add(m.id);
+          cacheKeys.add(m.sessionId);
+        }
+      }
+      if (!meta || change === "reindex" || change === "vanished") {
+        // Truncated/replaced/gone: the cached parse no longer matches the
+        // bytes on disk — drop it so the next read re-parses.
+        for (const key of cacheKeys) this.conversationLRU.delete(key);
+      } else if (change === "appended") {
+        // The file only grew: advance any cached parse by folding just the
+        // appended bytes, leaving the LRU warm instead of evicting it.
+        await this.extendCachedConversations(cacheKeys, filePath, meta.account);
+      }
+      // unchanged → the cached parse is still valid; leave it warm.
+
+      log.debug({ filePath, change, kept: !!meta }, "refreshFile: updated persistent index");
       return meta;
     }
 
@@ -639,6 +693,47 @@ export class ConversationScanner {
       "refreshFile: updated in-memory indexes",
     );
     return meta;
+  }
+
+  // Advance every cached parse of an appended file by folding only the new
+  // bytes through the conversation reducer — the in-memory analogue of the
+  // persisted metadata fold. Entries without resume state (Codex) and entries
+  // whose extension fails are evicted so the next read re-parses from scratch.
+  private async extendCachedConversations(
+    cacheKeys: Set<string>,
+    filePath: string,
+    account: string,
+  ): Promise<void> {
+    // Multiple keys can point at the same wrapper (path id + sessionId) —
+    // group by wrapper so each cached parse is extended exactly once.
+    const wrappers = new Map<CachedConversation, string[]>();
+    for (const key of cacheKeys) {
+      const wrapper = this.conversationLRU.get(key);
+      if (!wrapper) continue;
+      const keys = wrappers.get(wrapper) ?? [];
+      keys.push(key);
+      wrappers.set(wrapper, keys);
+    }
+    for (const [wrapper, keys] of wrappers) {
+      if (!wrapper.resume) {
+        for (const key of keys) this.conversationLRU.delete(key);
+        continue;
+      }
+      try {
+        const extended = await extendConversation(
+          wrapper.conversation,
+          wrapper.resume,
+          filePath,
+          account,
+        );
+        // Mutate the wrapper in place so every key holding it sees the update.
+        wrapper.conversation = extended.conversation;
+        wrapper.resume = extended.resume;
+      } catch (err) {
+        getLogger().warn({ filePath, err }, "refreshFile: cache extension failed, evicting");
+        for (const key of keys) this.conversationLRU.delete(key);
+      }
+    }
   }
 
   getMetadataCache(): Map<string, ConversationMeta> {

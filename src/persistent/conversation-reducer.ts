@@ -105,7 +105,14 @@ export function reduceConvLine(
   if (isToolResultOnly) {
     const pending = new Map(Object.entries(state.pendingToolUses));
     const toolResultBlocks = extractToolResultBlocks(msg?.content, pending);
-    if (toolResultBlocks.length > 0) metadata.toolResults = toolResultBlocks;
+    if (toolResultBlocks.length > 0) {
+      metadata.toolResults = toolResultBlocks;
+      // A result consumes its tool_use: prune it so the cross-line map stays
+      // bounded by IN-FLIGHT tool calls instead of growing with the file.
+      // Unpruned, every checkpoint snapshot/serialization of this state costs
+      // O(file) — the structuredClone stall on large live conversations.
+      for (const block of toolResultBlocks) delete state.pendingToolUses[block.toolUseId];
+    }
   }
 
   if (entry.teamName) {
@@ -139,6 +146,31 @@ export function reduceConvLine(
     attachment:
       entry.attachment !== undefined ? (entry.attachment as AttachmentSidecar) : undefined,
   };
+}
+
+// Parse/classify one raw JSONL line — the exact line→message mapping the
+// scanner uses internally, exported for downstream indexers (e.g. a watcher
+// tailing appended lines) so their semantics cannot drift from the scanner's.
+// Returns the produced ConversationMessage, or null when the line yields none
+// (system/summary/sidecar records, blank or malformed lines). Whether a line
+// produces a message — and its core fields (role, uuid, timestamp) — is
+// state-independent, so calls without `state` classify correctly on their own;
+// pass one shared `state` across successive lines of a file to also resolve
+// cross-line references (tool_result → tool_use types, team info) identically
+// to a full parse.
+export function parseJsonlLine(
+  line: string,
+  state: ConvReducerState = initialConvState(),
+): ConversationMessage | null {
+  const text = line.trimEnd();
+  if (text.trim().length === 0) return null;
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  return reduceConvLine(state, entry);
 }
 
 // Back-apply collected team info to a set of messages (the post-pass

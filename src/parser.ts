@@ -278,7 +278,7 @@ export function parseTeammateMessageTag(content: string): TeamInfo | null {
   return { teammateId: id, summary, color };
 }
 
-function getShortProjectName(fullPath: string): string {
+export function getShortProjectName(fullPath: string): string {
   const parts = fullPath.split("/").filter(Boolean);
   return parts.slice(-3).join("/");
 }

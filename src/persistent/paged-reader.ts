@@ -1,4 +1,5 @@
 import { createReadStream } from "fs";
+import { setImmediate as yieldToEventLoop } from "timers/promises";
 import type { ConversationMessage, ConversationPage } from "../types";
 import {
   applyTeamInfo,
@@ -6,6 +7,7 @@ import {
   initialConvState,
   reduceConvLine,
 } from "./conversation-reducer";
+import { YIELD_EVERY_LINES } from "./jsonl-tail-reader";
 import type { Checkpoint } from "./repositories/checkpoints.repo";
 
 // Snapshot the parser state every CHECKPOINT_INTERVAL messages.
@@ -14,19 +16,25 @@ export const CHECKPOINT_INTERVAL = 500;
 // Stream a JSONL file from `startOffset`, folding each complete line through the
 // conversation reducer. `onMessage` receives every produced message plus the
 // byte offset of the line that FOLLOWS it (a safe resume point) and the current
-// state. Returns the total messages produced from this offset.
-async function streamMessages(
+// state. `onEntry` (optional) sees every parsed entry first — return true to
+// consume it before it reaches the reducer (parseConversation's turn_duration
+// handling). Returns the offset/line just past the last COMPLETE line consumed
+// — a trailing torn line is never included, so the result is a safe resume
+// point for a later incremental fold.
+export async function streamMessages(
   filePath: string,
   startOffset: number,
   startLine: number,
   state: ConvReducerState,
   // Return true to stop streaming (window filled).
   onMessage: (message: ConversationMessage, nextByteOffset: number, nextLine: number) => boolean,
-): Promise<void> {
+  onEntry?: (entry: Record<string, unknown>) => boolean,
+): Promise<{ offset: number; line: number }> {
   const stream = createReadStream(filePath, { start: startOffset, encoding: "utf8" });
   let buffer = "";
   let offset = startOffset;
   let line = startLine;
+  let sinceYield = 0;
 
   for await (const chunk of stream) {
     buffer += chunk;
@@ -39,6 +47,13 @@ async function streamMessages(
       offset += Buffer.byteLength(lineWithNewline, "utf8");
       line += 1;
 
+      // Same cooperative yield as the tail reader: without it, buffered chunks
+      // drain through microtasks and a full-file walk blocks the event loop.
+      if (++sinceYield >= YIELD_EVERY_LINES) {
+        sinceYield = 0;
+        await yieldToEventLoop();
+      }
+
       if (text.length === 0) continue;
       let entry: Record<string, unknown>;
       try {
@@ -46,40 +61,52 @@ async function streamMessages(
       } catch {
         continue;
       }
+      if (onEntry?.(entry)) continue;
       const message = reduceConvLine(state, entry);
       if (message && onMessage(message, offset, line)) {
         stream.destroy();
-        return;
+        return { offset, line };
       }
     }
   }
+  return { offset, line };
 }
 
-// Build checkpoints by streaming the whole file once. Each checkpoint captures
-// the byte offset + reducer state immediately AFTER message (k*interval - 1),
-// i.e. a clean resume point for message index k*interval.
+// Build checkpoints by streaming the file once. Each checkpoint captures the
+// byte offset + reducer state immediately AFTER message (k*interval - 1), i.e.
+// a clean resume point for message index k*interval. Pass `from` (the last
+// persisted checkpoint) to EXTEND an existing chain: the stream resumes from
+// its offset/state and only checkpoints past it are returned — an append costs
+// O(new bytes), never a re-walk of the immutable prefix.
 export async function buildCheckpoints(
   filePath: string,
   interval = CHECKPOINT_INTERVAL,
+  from: Checkpoint | null = null,
 ): Promise<Checkpoint[]> {
   const checkpoints: Checkpoint[] = [];
-  const state = initialConvState();
-  let index = 0;
+  const state = from ? from.state : initialConvState();
+  let index = from ? from.messageIndex : 0;
 
-  await streamMessages(filePath, 0, 0, state, (_msg, nextOffset, nextLine) => {
-    index += 1;
-    // After consuming `index` messages, if the next message index is a multiple
-    // of the interval, snapshot a resume point for it.
-    if (index % interval === 0) {
-      checkpoints.push({
-        messageIndex: index,
-        byteOffset: nextOffset,
-        lineNumber: nextLine,
-        state: structuredClone(state),
-      });
-    }
-    return false; // never stop early — we want the whole file
-  });
+  await streamMessages(
+    filePath,
+    from?.byteOffset ?? 0,
+    from?.lineNumber ?? 0,
+    state,
+    (_msg, nextOffset, nextLine) => {
+      index += 1;
+      // After consuming `index` messages, if the next message index is a multiple
+      // of the interval, snapshot a resume point for it.
+      if (index % interval === 0) {
+        checkpoints.push({
+          messageIndex: index,
+          byteOffset: nextOffset,
+          lineNumber: nextLine,
+          state: structuredClone(state),
+        });
+      }
+      return false; // never stop early — we want the whole file
+    },
+  );
 
   return checkpoints;
 }

@@ -42,7 +42,9 @@ The scanner is **SQLite-backed by default** (`better-sqlite3`, WAL mode). A `Con
 - `index-engine.ts` — discover → classify → tail-read → upsert; queries read straight from SQLite
 - `cursor.ts` + `jsonl-tail-reader.ts` — byte-offset incremental indexing: an appended file re-reads only the new bytes (O(Δ)); truncate/replace reindexes from 0
 - `metadata-reducer.ts` / `conversation-reducer.ts` — serializable per-line folds shared by `parser.ts` and the incremental/bounded readers (so a streamed parse and a resumed parse are identical by construction)
-- `paged-reader.ts` + `message_checkpoints` — bounded `getConversationPage` that seeks from the nearest checkpoint and reads only the window
+- `paged-reader.ts` + `message_checkpoints` — bounded `getConversationPage` that seeks from the nearest checkpoint and reads only the window. Checkpoints are **append-only** (Kafka sparse-index style): an append extends the chain past the previous EOF; rows are dropped only on truncate/replace
+- `conversation-stream.ts` — resumable full-conversation parse backing the scanner's LRU: `refreshFile()` on an appended file folds only the new bytes into the cached `Conversation` instead of evicting it. `refreshFile()` and checkpoint builds are single-flighted per path (concurrent callers share one parse)
+- `parseJsonlLine()` (public export) — stateless per-line line→message mapping (the same reducer used internally) for downstream indexers tailing appended lines
 - `repositories/fts.repo.ts` — SQLite FTS5 search backend (persistent-mode `search()`)
 - `sidecar.ts` — optional `<file>.idx.json` (off by default, `persistent: { sidecar: true }`)
 - `src/watcher/` — optional chokidar watcher + debounced single-writer index queue + periodic rescan backstop; emits `change`/`error` events (`scanner.watch()` / `on()`)
