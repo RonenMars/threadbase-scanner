@@ -223,6 +223,57 @@ describe("incremental refresh (byte-offset checkpointing)", () => {
     });
   });
 
+  describe("stale checkpoint guard", () => {
+    // A checkpoint whose byteOffset lies past the file's CURRENT size is stale:
+    // the file was truncated/replaced on disk and no refresh has landed yet.
+    // Seeking there streams zero bytes and serves an empty window even when the
+    // requested messages exist in the new content — getPage must fall back to
+    // reading from byte 0 instead.
+    const textLine = (i: number, pad: number, session: string) =>
+      JSON.stringify({
+        type: i % 2 === 0 ? "assistant" : "user",
+        uuid: `g${i}`,
+        timestamp: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}.000Z`,
+        sessionId: session,
+        cwd: "/home/live",
+        message: {
+          role: i % 2 === 0 ? "assistant" : "user",
+          content: [{ type: "text", text: `msg ${i} ${"x".repeat(pad)}` }],
+        },
+      });
+
+    it("ignores checkpoints past the current EOF and serves the page from byte 0", async () => {
+      // Seed with LONG lines so checkpoint 500's byteOffset is large.
+      const seeded: string[] = [];
+      for (let i = 0; i < 1100; i++) seeded.push(textLine(i, 400, "sess-live"));
+      writeFileSync(file, `${seeded.join("\n")}\n`);
+      const scanner = new ConversationScanner({ persistent: { dbPath } });
+      await scanner.scan({ profiles: [profile()] });
+      await scanner.getConversationPage(file, { limit: 10 });
+      expect(checkpointRows(dbPath, file).map((r) => r.message_index)).toEqual([500, 1000]);
+
+      // Replace on disk with SHORTER-BUT-DENSER content (more messages, far
+      // fewer bytes) and do NOT refresh: the persisted chain is now stale and
+      // every checkpoint's byteOffset lies beyond the new EOF.
+      const replaced: string[] = [];
+      for (let i = 0; i < 700; i++) replaced.push(textLine(i, 0, "sess-replaced"));
+      writeFileSync(file, `${replaced.join("\n")}\n`);
+
+      const page = await scanner.getConversationPage(file, { beforeIndex: 700, limit: 20 });
+      const full = await parseConversation(file, "default");
+      // The window is served from the real current bytes, not a stale seek.
+      expect(page?.messages).toEqual(full?.messages.slice(680, 700));
+
+      // A refresh reconciles fully: stale chain dropped, totals correct again.
+      await scanner.refreshFile(file);
+      expect(checkpointRows(dbPath, file)).toEqual([]);
+      const after = await scanner.getConversationPage(file, { limit: 20 });
+      expect(after?.total).toBe(700);
+      expect(after?.messages).toEqual(full?.messages.slice(680, 700));
+      await scanner.close();
+    });
+  });
+
   describe("resumable conversation LRU", () => {
     // Spies covering every code path that reads a conversation file in
     // getConversation(); a pure cache hit calls none of them.

@@ -1,3 +1,4 @@
+import { statSync } from "fs";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
@@ -427,7 +428,19 @@ export class PersistentEngine {
 
     const beforeIndex = options.beforeIndex ?? total;
     const fromIndex = Math.max(0, beforeIndex - options.limit);
-    const floor = this.checkpoints.floor(filePath, fromIndex);
+    let floor = this.checkpoints.floor(filePath, fromIndex);
+    // A checkpoint past the current EOF is stale — the file was truncated or
+    // replaced on disk and no refresh has landed yet. Seeking there would read
+    // nothing (or garbage), so fall back to byte 0: correct, just slower, and
+    // the next refresh drops the stale chain. A failed stat is left to
+    // readPage, which surfaces the read error exactly as before.
+    if (floor) {
+      try {
+        if (floor.byteOffset > statSync(filePath).size) floor = null;
+      } catch {
+        // fall through to readPage's own error handling
+      }
+    }
     return readPage(filePath, total, options, floor);
   }
 
