@@ -1,3 +1,9 @@
+## [0.10.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.4...v0.10.0) (2026-07-12)
+
+### Features
+
+* **scanner:** make live-file refresh and paging incremental ([#41](https://github.com/RonenMars/threadbase-scanner/issues/41)) ([0940933](https://github.com/RonenMars/threadbase-scanner/commit/094093345e93c1739c37fb0cd41aa14ec5063663))
+
 ## [0.9.4](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.3...v0.9.4) (2026-07-05)
 
 ### Bug Fixes
