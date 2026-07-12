@@ -453,7 +453,10 @@ describe("incremental refresh (byte-offset checkpointing)", () => {
     // suite runs files in parallel; a genuine regression (sustained ≥600ms
     // stalls, see below) fails every attempt, while a contended-host blip
     // passes on a calmer retry.
-    it("indexes and checkpoints a 100k-line file without long event-loop stalls", { timeout: 120_000, retry: 2 }, async () => {
+    it("indexes and checkpoints a 100k-line file without long event-loop stalls", {
+      timeout: 120_000,
+      retry: 2,
+    }, async () => {
       // Write the fixture in bounded chunks (and let a macrotask pass) so the
       // histogram below measures the scanner's stalls, not V8 collecting the
       // test's own fixture garbage.
