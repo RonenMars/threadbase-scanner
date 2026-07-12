@@ -1,3 +1,9 @@
+## [0.10.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.10.0...v0.10.1) (2026-07-12)
+
+### Bug Fixes
+
+* **scanner:** ignore checkpoints past the current eof when paging ([#42](https://github.com/RonenMars/threadbase-scanner/issues/42)) ([d5dbd68](https://github.com/RonenMars/threadbase-scanner/commit/d5dbd68c73778cba77eec92533c696221f6bf17b))
+
 ## [0.10.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.9.4...v0.10.0) (2026-07-12)
 
 ### Features
