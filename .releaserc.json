@@ -6,11 +6,13 @@
       {
         "preset": "conventionalcommits",
         "releaseRules": [
-          { "type": "chore", "release": false },
           { "type": "docs", "release": false },
-          { "type": "test", "release": false },
-          { "type": "build", "release": false },
-          { "type": "ci", "release": false }
+          { "type": "ci", "release": false },
+          { "type": "chore", "release": "patch" },
+          { "type": "test", "release": "patch" },
+          { "type": "build", "release": "patch" },
+          { "type": "style", "release": "patch" },
+          { "type": "refactor", "release": "patch" }
         ]
       }
     ],
