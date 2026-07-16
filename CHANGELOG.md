@@ -1,3 +1,9 @@
+## [0.10.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.10.1...v0.10.2) (2026-07-16)
+
+### Bug Fixes
+
+* **deps:** trigger release for biome, types/node, and flexsearch bumps ([#44](https://github.com/RonenMars/threadbase-scanner/issues/44)) ([b4a008b](https://github.com/RonenMars/threadbase-scanner/commit/b4a008b35b8ab7f0a4c21cd4ad49ff985bfffaed)), closes [#13](https://github.com/RonenMars/threadbase-scanner/issues/13) [#14](https://github.com/RonenMars/threadbase-scanner/issues/14) [#15](https://github.com/RonenMars/threadbase-scanner/issues/15)
+
 ## [0.10.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.10.0...v0.10.1) (2026-07-12)
 
 ### Bug Fixes

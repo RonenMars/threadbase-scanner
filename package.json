@@ -1,6 +1,6 @@
 {
   "name": "@threadbase-sh/scanner",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Unified Claude Code conversation history scanner",
   "license": "MIT",
   "author": {
