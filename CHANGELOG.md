@@ -1,3 +1,9 @@
+## [0.11.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.10.2...v0.11.0) (2026-07-16)
+
+### Features
+
+* **release:** patch-release every commit type except docs and ci ([#45](https://github.com/RonenMars/threadbase-scanner/issues/45)) ([d8b514a](https://github.com/RonenMars/threadbase-scanner/commit/d8b514aacb50d6f5d67407de818e89dcb579e169)), closes [#44](https://github.com/RonenMars/threadbase-scanner/issues/44)
+
 ## [0.10.2](https://github.com/RonenMars/threadbase-scanner/compare/v0.10.1...v0.10.2) (2026-07-16)
 
 ### Bug Fixes
