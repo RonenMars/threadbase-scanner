@@ -1,5 +1,6 @@
 import fg from "fast-glob";
 import { stat } from "fs/promises";
+import { canonicalPath } from "./canonical-path";
 import { getLogger } from "./logger";
 
 export interface DiscoveredFile {
@@ -60,7 +61,12 @@ export async function discoverJsonlFiles(
         if (size < 0) {
           skippedInaccessible++;
         } else if (size > 0) {
-          results.push({ filePath, account });
+          // fast-glob emits forward slashes even on Windows. Emit the canonical
+          // form instead, so a discovered path is the same string as the one a
+          // watcher/path.join caller produces for that file — discovery output
+          // keys the in-memory metadata cache and the has_nested comparison in
+          // dir-watermark, neither of which goes through a repository.
+          results.push({ filePath: canonicalPath(filePath), account });
           kept++;
         } else {
           skippedEmpty++;

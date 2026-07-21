@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { openDatabase } from "../src/persistent/db";
 import { ConversationFilesRepo } from "../src/persistent/repositories/conversation-files.repo";
 import { ConversationsRepo } from "../src/persistent/repositories/conversations.repo";
@@ -12,10 +12,16 @@ import type { ConversationMeta } from "../src/types";
 // the migration runner then upgrades.
 const openDatabaseRaw = (path: string) => new Database(path);
 
+// Built with the platform separator so it is already in the canonical form the
+// repositories store a path under — otherwise the round-trip assertions below
+// compare a forward-slash literal against its canonicalized spelling on
+// Windows. Identical to the previous "/abs/proj/sess.jsonl" literal on POSIX.
+const SAMPLE_FILE = join(sep, "abs", "proj", "sess.jsonl");
+
 function sampleMeta(overrides: Partial<ConversationMeta> = {}): ConversationMeta {
   return {
-    id: "/abs/proj/sess.jsonl",
-    filePath: "/abs/proj/sess.jsonl",
+    id: SAMPLE_FILE,
+    filePath: SAMPLE_FILE,
     provider: "claude-code",
     sessionId: "sess-1",
     sessionName: "my-session",
@@ -215,8 +221,8 @@ describe("persistent db scaffolding", () => {
     files.add(sampleMeta());
 
     const convos = new ConversationsRepo(db);
-    expect(convos.getByIdOrSession("/abs/proj/sess.jsonl")?.sessionId).toBe("sess-1");
-    expect(convos.getByIdOrSession("sess-1")?.id).toBe("/abs/proj/sess.jsonl");
+    expect(convos.getByIdOrSession(SAMPLE_FILE)?.sessionId).toBe("sess-1");
+    expect(convos.getByIdOrSession("sess-1")?.id).toBe(SAMPLE_FILE);
     expect(convos.getByIdOrSession("nope")).toBeNull();
     db.close();
   });

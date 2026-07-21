@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import { canonicalPath } from "../../canonical-path";
 import type { ConversationMeta } from "../../types";
 
 // FTS5-backed search index over conversation content + metadata. One row per
@@ -8,8 +9,13 @@ export class FtsRepo {
   constructor(private db: Database) {}
 
   upsert(meta: ConversationMeta): void {
+    // Canonical form, matching conversations.source_path — a search hit is
+    // resolved back through getBySourcePath(), so the two must agree.
+    const sourcePath = canonicalPath(meta.id);
     const tx = this.db.transaction(() => {
-      this.db.prepare("DELETE FROM conversation_messages_fts WHERE source_path = ?").run(meta.id);
+      this.db
+        .prepare("DELETE FROM conversation_messages_fts WHERE source_path = ?")
+        .run(sourcePath);
       this.db
         .prepare(
           `INSERT INTO conversation_messages_fts
@@ -17,7 +23,7 @@ export class FtsRepo {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
-          meta.id,
+          sourcePath,
           meta.contentSnippet ?? "",
           meta.projectName ?? "",
           meta.sessionId ?? "",
@@ -32,7 +38,9 @@ export class FtsRepo {
   }
 
   remove(sourcePath: string): void {
-    this.db.prepare("DELETE FROM conversation_messages_fts WHERE source_path = ?").run(sourcePath);
+    this.db
+      .prepare("DELETE FROM conversation_messages_fts WHERE source_path = ?")
+      .run(canonicalPath(sourcePath));
   }
 
   // Ranked source_paths matching the query, best first. Returns [] on an empty
