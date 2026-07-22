@@ -3,6 +3,7 @@ import { closeSync, openSync, readSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { LRUCache } from "./cache";
+import { canonicalPath } from "./canonical-path";
 import { discoverJsonlFiles } from "./discovery";
 import {
   applyAccountFilter,
@@ -451,15 +452,19 @@ export class ConversationScanner {
     _options?: GetConversationOptions,
   ): Promise<Conversation | null> {
     const log = getLogger();
-    const cached = this.conversationLRU.get(id);
+    // Canonicalize the file-path form of the id so a native (join/watcher) and a
+    // forward-slash (fast-glob) spelling of the same file resolve to one entry.
+    // A sessionId (no separators) is unaffected.
+    const cid = canonicalPath(id);
+    const cached = this.conversationLRU.get(cid);
     if (cached) {
       log.debug({ id }, "getConversation: cache hit");
       return cached.conversation;
     }
 
     const meta = this.persistent
-      ? this.engine().getByIdOrSession(id)
-      : (this.metadataCache.get(id) ?? this.resolveSessionId(id));
+      ? this.engine().getByIdOrSession(cid)
+      : (this.metadataCache.get(cid) ?? this.resolveSessionId(cid));
     if (!meta) {
       log.debug({ id }, "getConversation: not found in metadata");
       return null;
@@ -474,7 +479,7 @@ export class ConversationScanner {
       // a refresh evicts them as before).
       if (this.persistent && meta.provider !== CODEX_CLI_PROVIDER) {
         const parsed = await parseConversationResumable(meta.filePath, meta.account);
-        if (parsed) this.conversationLRU.set(id, parsed);
+        if (parsed) this.conversationLRU.set(cid, parsed);
         return parsed?.conversation ?? null;
       }
       const conversation =
@@ -482,7 +487,7 @@ export class ConversationScanner {
           ? await parseCodexConversation(meta.filePath, meta.account)
           : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
-        this.conversationLRU.set(id, { conversation });
+        this.conversationLRU.set(cid, { conversation });
       }
       return conversation;
     } catch (err) {
@@ -514,7 +519,7 @@ export class ConversationScanner {
     options: GetConversationPageOptions,
   ): Promise<ConversationPage | null> {
     if (this.persistent) {
-      return this.engine().getPage(id, options);
+      return this.engine().getPage(canonicalPath(id), options);
     }
 
     const conversation = await this.getConversation(id);
@@ -578,14 +583,18 @@ export class ConversationScanner {
   private readonly refreshesInFlight = new Map<string, Promise<ConversationMeta | null>>();
 
   refreshFile(filePath: string, account?: string): Promise<ConversationMeta | null> {
-    const inFlight = this.refreshesInFlight.get(filePath);
+    // Key every refresh off the canonical path so a fast-glob (forward slash)
+    // and a watcher/join (native) spelling of the same file share one in-flight
+    // refresh and hit the same stored row.
+    const cpath = canonicalPath(filePath);
+    const inFlight = this.refreshesInFlight.get(cpath);
     if (inFlight) return inFlight;
-    const refresh = this.doRefreshFile(filePath, account).finally(() => {
-      if (this.refreshesInFlight.get(filePath) === refresh) {
-        this.refreshesInFlight.delete(filePath);
+    const refresh = this.doRefreshFile(cpath, account).finally(() => {
+      if (this.refreshesInFlight.get(cpath) === refresh) {
+        this.refreshesInFlight.delete(cpath);
       }
     });
-    this.refreshesInFlight.set(filePath, refresh);
+    this.refreshesInFlight.set(cpath, refresh);
     return refresh;
   }
 

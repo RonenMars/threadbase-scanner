@@ -1,5 +1,6 @@
 import type { Database } from "better-sqlite3";
 import { basename, dirname } from "path";
+import { canonicalPath } from "../../canonical-path";
 
 // One tracked JSONL source file + its incremental indexing cursor.
 export interface FileRow {
@@ -24,13 +25,19 @@ export class ConversationFilesRepo {
   getByPath(absolutePath: string): FileRow | undefined {
     return this.db
       .prepare("SELECT * FROM conversation_files WHERE absolute_path = ?")
-      .get(absolutePath) as FileRow | undefined;
+      .get(canonicalPath(absolutePath)) as FileRow | undefined;
   }
 
   // Insert a freshly-discovered file at offset 0; returns its row id. Existing
   // path is left untouched (returns the existing id) so a re-discovery is safe.
+  //
+  // absolute_path/parent_dir are stored canonicalized so a caller that built the
+  // path with the native separator (watcher, path.join) and one that got it from
+  // fast-glob (forward slashes, even on Windows) land on the same row instead of
+  // inserting a duplicate.
   ensure(absolutePath: string, account: string): number {
-    const existing = this.getByPath(absolutePath);
+    const canonical = canonicalPath(absolutePath);
+    const existing = this.getByPath(canonical);
     if (existing) return existing.id;
 
     const info = this.db
@@ -38,7 +45,7 @@ export class ConversationFilesRepo {
         `INSERT INTO conversation_files (absolute_path, parent_dir, file_name, account)
          VALUES (?, ?, ?, ?)`,
       )
-      .run(absolutePath, dirname(absolutePath), basename(absolutePath), account);
+      .run(canonical, dirname(canonical), basename(canonical), account);
     return Number(info.lastInsertRowid);
   }
 
@@ -129,6 +136,6 @@ export class ConversationFilesRepo {
       .prepare(
         "SELECT absolute_path, account FROM conversation_files WHERE parent_dir = ? AND status != 'deleted'",
       )
-      .all(parentDir) as { absolute_path: string; account: string }[];
+      .all(canonicalPath(parentDir)) as { absolute_path: string; account: string }[];
   }
 }

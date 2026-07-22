@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import { canonicalPath } from "../../canonical-path";
 
 export interface ScannedDirRow {
   path: string;
@@ -14,7 +15,7 @@ export class ScannedDirsRepo {
   constructor(private db: Database) {}
 
   get(path: string): ScannedDirRow | undefined {
-    return this.db.prepare("SELECT * FROM scanned_dirs WHERE path = ?").get(path) as
+    return this.db.prepare("SELECT * FROM scanned_dirs WHERE path = ?").get(canonicalPath(path)) as
       | ScannedDirRow
       | undefined;
   }
@@ -23,7 +24,7 @@ export class ScannedDirsRepo {
   childrenOf(parentRoot: string): ScannedDirRow[] {
     return this.db
       .prepare("SELECT * FROM scanned_dirs WHERE parent_root = ? ORDER BY path ASC")
-      .all(parentRoot) as ScannedDirRow[];
+      .all(canonicalPath(parentRoot)) as ScannedDirRow[];
   }
 
   upsert(path: string, parentRoot: string | null, mtimeMs: number, hasNested: boolean): void {
@@ -37,11 +38,16 @@ export class ScannedDirsRepo {
            has_nested = excluded.has_nested,
            updated_at = CURRENT_TIMESTAMP`,
       )
-      .run(path, parentRoot, mtimeMs, hasNested ? 1 : 0);
+      .run(
+        canonicalPath(path),
+        parentRoot === null ? null : canonicalPath(parentRoot),
+        mtimeMs,
+        hasNested ? 1 : 0,
+      );
   }
 
   // Drop a project subdirectory's watermark row (it vanished from disk).
   remove(path: string): void {
-    this.db.prepare("DELETE FROM scanned_dirs WHERE path = ?").run(path);
+    this.db.prepare("DELETE FROM scanned_dirs WHERE path = ?").run(canonicalPath(path));
   }
 }

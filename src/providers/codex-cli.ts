@@ -3,6 +3,7 @@ import { createReadStream } from "fs";
 import { stat } from "fs/promises";
 import { basename } from "path";
 import { createInterface } from "readline";
+import { canonicalPath } from "../canonical-path";
 import { getLogger } from "../logger";
 import { cleanSystemTags } from "../tags";
 import type {
@@ -65,7 +66,9 @@ export class CodexCliProvider implements ScannerProvider<CodexAccumulator> {
       for (const filePath of paths) {
         try {
           const s = await stat(filePath);
-          if (s.size > 0) results.push({ filePath, account: "codex" });
+          // Canonical form — fast-glob emits forward slashes even on Windows,
+          // but every by-path lookup keys off the canonical spelling.
+          if (s.size > 0) results.push({ filePath: canonicalPath(filePath), account: "codex" });
         } catch (err) {
           log.warn({ filePath, err }, "codex discovery: stat failed");
         }

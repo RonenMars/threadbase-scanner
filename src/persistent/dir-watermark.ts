@@ -1,4 +1,6 @@
 import { readdir, stat } from "fs/promises";
+import { dirname, join } from "path";
+import { canonicalPath } from "../canonical-path";
 import { type DiscoveredFile, discoverJsonlFiles } from "../discovery";
 import { getLogger } from "../logger";
 import type { ConversationFilesRepo } from "./repositories/conversation-files.repo";
@@ -48,14 +50,12 @@ export async function discoverJsonlFilesGated(
 
   for (const rawDir of dirs) {
     const { account } = rawDir;
-    // Normalize to forward slashes: parent_dir/absolute_path are stored from
-    // fast-glob results (always "/"-separated, even on Windows), but
-    // projectsDir/joinPath below use the platform separator. Without this, the
-    // reuse branch's string keys never match what's already in the DB on
-    // Windows, so every dir looks "unknown" — worse than not gating, but the
-    // real landmine is the has_nested/parent_dir lookups silently missing and
-    // the caller's seen-set losing those files to the deletion-reconcile.
-    const projectsDir = rawDir.projectsDir.replace(/\\/g, "/");
+    // Canonicalize: the reuse branch below compares these dir keys against
+    // parent_dir/scanned_dirs.path, which the repositories store canonically.
+    // Without this the has_nested/parent_dir lookups silently miss on Windows
+    // when a caller's projectsDir came in with the other separator style, and
+    // the caller's seen-set then loses those files to the deletion-reconcile.
+    const projectsDir = canonicalPath(rawDir.projectsDir);
 
     const resolved = await resolveProjectDirs(projectsDir, scannedDirs);
     if (resolved === null) continue; // projectsDir unreadable/vanished
@@ -167,11 +167,13 @@ async function resolveProjectDirs(
   return { entries, commitRoot: { mtimeMs: rootStat.mtimeMs } };
 }
 
+// Platform-aware: the paths threaded through here are canonical (native
+// separator on Windows), so a hardcoded "/" split would read the whole path as
+// the dirname and mis-derive has_nested.
 function dirnameOf(filePath: string): string {
-  const idx = filePath.lastIndexOf("/");
-  return idx === -1 ? filePath : filePath.slice(0, idx);
+  return dirname(filePath);
 }
 
 function joinPath(dir: string, name: string): string {
-  return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
+  return join(dir, name);
 }

@@ -1,4 +1,5 @@
 import { statSync } from "fs";
+import { canonicalPath } from "../canonical-path";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
@@ -164,7 +165,10 @@ export class PersistentEngine {
     if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
       coveredAccounts.add("codex");
     }
-    const seen = new Set(discovered.map((d) => d.filePath));
+    // Canonical form on both sides: the stored paths are canonical, and a
+    // discovery source that emits native separators would otherwise leave every
+    // one of its files out of the seen-set and get them marked deleted.
+    const seen = new Set(discovered.map((d) => canonicalPath(d.filePath)));
     for (const path of this.files.activePathsByAccounts([...coveredAccounts])) {
       if (!seen.has(path)) this.markDeleted(path);
     }
@@ -181,7 +185,7 @@ export class PersistentEngine {
   // alongside the meta so callers (refreshFile) can keep, extend, or evict
   // their own per-file caches without re-stat'ing the file (racy) themselves.
   async indexFile(
-    filePath: string,
+    rawFilePath: string,
     account: string,
     tierName: string,
     customTiers: ScanOptions["tiers"],
@@ -192,6 +196,11 @@ export class PersistentEngine {
     const log = getLogger();
     const tier = resolveTier(tierName, customTiers);
 
+    // Canonicalize once, here: everything downstream (the cursor row, the
+    // conversation's source_path/id, the checkpoint + FTS keys, the sidecar, and
+    // the meta handed back to the caller) then keys off the one canonical
+    // spelling, whichever separator style the caller passed in.
+    const filePath = canonicalPath(rawFilePath);
     const existing = this.files.getByPath(filePath);
     const { change, stat } = classify(filePath, existing);
 

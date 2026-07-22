@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import { canonicalPath } from "../../canonical-path";
 import { CLAUDE_CODE_PROVIDER } from "../../providers/provider";
 import type { ConversationMeta, MessageSender, ProviderName } from "../../types";
 
@@ -132,7 +133,10 @@ export class ConversationsRepo {
       )
       .run({
         file_id: fileId,
-        source_path: meta.id,
+        // Canonical form, matching conversation_files.absolute_path — otherwise
+        // a native-separator caller writes a second spelling of the same file
+        // that every by-path lookup (and the deletion-reconcile) then misses.
+        source_path: canonicalPath(meta.id),
         provider: meta.provider ?? CLAUDE_CODE_PROVIDER,
         kind: meta.kind ?? null,
         external_session_id: meta.externalSessionId ?? null,
@@ -165,7 +169,7 @@ export class ConversationsRepo {
   getBySourcePath(sourcePath: string): ConversationMeta | null {
     const row = this.db
       .prepare("SELECT * FROM conversations WHERE source_path = ? AND status = 'active'")
-      .get(sourcePath) as ConversationRow | undefined;
+      .get(canonicalPath(sourcePath)) as ConversationRow | undefined;
     return row ? rowToMeta(row) : null;
   }
 
@@ -250,7 +254,7 @@ export class ConversationsRepo {
       .prepare(
         "SELECT page_message_count AS n FROM conversations WHERE source_path = ? AND status = 'active'",
       )
-      .get(sourcePath) as { n: number } | undefined;
+      .get(canonicalPath(sourcePath)) as { n: number } | undefined;
     return row?.n ?? 0;
   }
 
