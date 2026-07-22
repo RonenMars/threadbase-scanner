@@ -1,3 +1,9 @@
+## [0.11.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.11.0...v0.11.1) (2026-07-22)
+
+### Bug Fixes
+
+* **persistent:** canonicalize file paths so by-path lookups match on Windows ([1ed21fb](https://github.com/RonenMars/threadbase-scanner/commit/1ed21fb9c98c2f9fd1d275a1b3cd98ea091d5b07))
+
 ## [0.11.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.10.2...v0.11.0) (2026-07-16)
 
 ### Features
