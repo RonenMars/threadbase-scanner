@@ -3,7 +3,7 @@
 Unified Claude Code conversation history scanner.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20.12-brightgreen.svg)](https://nodejs.org)
 
 Combines the best parts of four independent scanner implementations (VS Code, Electron, IntelliJ, CLI) into a single TypeScript package.
 
@@ -31,7 +31,7 @@ Combines the best parts of four independent scanner implementations (VS Code, El
 npm install @threadbase-sh/scanner
 ```
 
-**Requires Node.js 18 or later.** The package uses `better-sqlite3` (a native module) for its persistent index; prebuilt binaries are downloaded for common platforms, with a node-gyp fallback otherwise.
+**Requires Node.js 20.12 or later.** The package uses `better-sqlite3` (a native module) for its persistent index; prebuilt binaries are downloaded for common platforms, with a node-gyp fallback otherwise.
 
 ### Persistent vs. in-memory
 
