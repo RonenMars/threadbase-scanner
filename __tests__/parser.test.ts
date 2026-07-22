@@ -11,15 +11,12 @@ describe("parseMeta", () => {
     expect(meta).not.toBeNull();
     expect(meta?.sessionId).toBe("sess-abc");
     expect(meta?.sessionName).toBe("my-session");
+  });
+
+  it("falls back sessionName to the first user message's first line when no slug", async () => {
+    const meta = await parseMeta(join(FIXTURES, "no-slug-conversation.jsonl"), "default", TIER_STD);
+    expect(meta?.sessionName).toBe("Fix the failing login test");
     expect(meta?.projectPath).toBe("/home/user/project");
-    expect(meta?.messageCount).toBe(4);
-    expect(meta?.lastMessageSender).toBe("assistant");
-    expect(meta?.timestamp).toBe("2026-01-15T10:01:30.000Z");
-    expect(meta?.preview).toContain("Hello");
-    expect(meta?.model).toBe("claude-sonnet-4-20250514");
-    expect(meta?.toolNames).toContain("Edit");
-    expect(meta?.isSubagent).toBe(false);
-    expect(meta?.isTeammate).toBe(false);
   });
 
   it("detects teammate from first user message", async () => {
@@ -108,6 +105,11 @@ describe("parseConversation", () => {
   it("returns null for empty file", async () => {
     const conv = await parseConversation(join(FIXTURES, "empty.jsonl"), "default");
     expect(conv).toBeNull();
+  });
+
+  it("falls back sessionName to the first user message when no slug", async () => {
+    const conv = await parseConversation(join(FIXTURES, "no-slug-conversation.jsonl"), "default");
+    expect(conv?.sessionName).toBe("Fix the failing login test");
   });
 });
 

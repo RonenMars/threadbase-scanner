@@ -3,7 +3,12 @@ import { basename } from "path";
 import { createInterface } from "readline";
 import { getLogger } from "./logger";
 import { applyTeamInfo, initialConvState, reduceConvLine } from "./persistent/conversation-reducer";
-import { finalizeMeta, initialReducerState, reduceLine } from "./persistent/metadata-reducer";
+import {
+  deriveSessionNameFromFirstMessage,
+  finalizeMeta,
+  initialReducerState,
+  reduceLine,
+} from "./persistent/metadata-reducer";
 import { cleanSystemTags } from "./tags";
 import type {
   ContentTier,
@@ -133,7 +138,9 @@ export async function parseConversation(
     projectPath: state.cwd,
     projectName: getShortProjectName(state.cwd),
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName: state.sessionName,
+    sessionName:
+      state.sessionName ||
+      deriveSessionNameFromFirstMessage(messages.find((m) => m.role === "user" && m.text) ?? null),
     messages,
     fullText: textParts.join(" "),
     timestamp: state.latestTimestamp || new Date().toISOString(),
