@@ -167,7 +167,7 @@ export function finalizeMeta(
     filePath,
     provider: CLAUDE_CODE_PROVIDER,
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName: state.sessionName,
+    sessionName: state.sessionName || deriveSessionNameFromFirstMessage(state.firstMessage),
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,
@@ -187,6 +187,15 @@ export function finalizeMeta(
     lastMessage: state.lastMessage,
     lastPrompt: state.lastPrompt || undefined,
   };
+}
+
+// Fallback session name for interactive Claude Code conversations, which carry
+// no `slug` (only SDK/agent sessions do). The first user message is the only
+// human-readable name source in a normal JSONL, so use its first line, trimmed
+// to a title-sized length. Empty when there is no message text.
+export function deriveSessionNameFromFirstMessage(firstMessage: { text: string } | null): string {
+  const firstLine = firstMessage?.text.split("\n", 1)[0]?.trim() ?? "";
+  return firstLine.slice(0, 80);
 }
 
 function getShortProjectName(fullPath: string): string {
