@@ -23,23 +23,26 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, appendFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { analyzeCommits } from "@semantic-release/commit-analyzer";
 import semver from "semver";
+import { createLogger } from "./lib/log.mjs";
+import { isMainModule, repoRootFromScript } from "./lib/module.mjs";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const log = createLogger("release-precheck");
+const defaultRepoRoot = repoRootFromScript(import.meta.url);
 
 /** Run git and return trimmed stdout. */
-function git(args) {
-  return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
+export function git(cwd, args) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
 /** Extract the @semantic-release/commit-analyzer options from .releaserc.json. */
-function loadAnalyzerConfig() {
-  const rc = JSON.parse(readFileSync(join(repoRoot, ".releaserc.json"), "utf8"));
+export function loadAnalyzerConfig(cwd = defaultRepoRoot) {
+  const rc = JSON.parse(readFileSync(join(cwd, ".releaserc.json"), "utf8"));
   const entry = (rc.plugins || []).find(
-    (p) => p === "@semantic-release/commit-analyzer" ||
+    (p) =>
+      p === "@semantic-release/commit-analyzer" ||
       (Array.isArray(p) && p[0] === "@semantic-release/commit-analyzer"),
   );
   if (!entry) {
@@ -54,15 +57,8 @@ function loadAnalyzerConfig() {
  * null if there is no prior stable release. Prerelease tags (vX.Y.Z-next.N) are
  * intentionally excluded — this precheck targets the stable channel.
  */
-function lastStableTag() {
-  const out = git([
-    "tag",
-    "--list",
-    "v*",
-    "--merged",
-    "HEAD",
-    "--sort=-v:refname",
-  ]);
+export function lastStableTag(cwd = defaultRepoRoot) {
+  const out = git(cwd, ["tag", "--list", "v*", "--merged", "HEAD", "--sort=-v:refname"]);
   if (!out) return null;
   for (const tag of out.split("\n")) {
     const version = tag.replace(/^v/, "");
@@ -75,11 +71,11 @@ function lastStableTag() {
 }
 
 /** Commits since `tag` (or all history if tag is null), shaped for the analyzer. */
-function commitsSince(tag) {
+export function commitsSince(cwd = defaultRepoRoot, tag) {
   // %H <newline> %B (full message) <newline> NUL-terminator, so multi-line
   // bodies survive intact and commits split cleanly on the NUL.
   const range = tag ? `${tag}..HEAD` : "HEAD";
-  const raw = git(["log", range, "--format=%H%n%B%x00"]);
+  const raw = git(cwd, ["log", range, "--format=%H%n%B%x00"]);
   if (!raw) return [];
   return raw
     .split("\0")
@@ -94,50 +90,93 @@ function commitsSince(tag) {
 }
 
 /** Minimal logger matching the subset of signale the analyzer uses. */
-const logger = {
+const analyzerLogger = {
   log: () => {},
   error: (...args) => console.error(...args),
 };
 
-function setOutput(key, value) {
-  if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+export function setOutput(key, value, outputPath = process.env.GITHUB_OUTPUT) {
+  if (outputPath) {
+    appendFileSync(outputPath, `${key}=${value}\n`);
   }
 }
 
-async function main() {
-  const pluginConfig = loadAnalyzerConfig();
-  const tag = lastStableTag();
-  const baseVersion = tag ? tag.replace(/^v/, "") : "0.0.0";
-  const commits = commitsSince(tag);
+/**
+ * @returns {{ shouldRelease: boolean, nextVersion: string, releaseType: string|null, tag: string|null, commitCount: number }}
+ */
+export async function runPrecheck(cwd = defaultRepoRoot, opts = {}) {
+  const writeOutput = opts.setOutput ?? setOutput;
+  log.step("init", `cwd=${cwd}`);
 
+  log.step("load-analyzer-config");
+  const pluginConfig = loadAnalyzerConfig(cwd);
+
+  log.step("resolve-last-stable-tag");
+  const tag = lastStableTag(cwd);
+  log.step("resolve-last-stable-tag", `tag=${tag || "none"}`);
+  const baseVersion = tag ? tag.replace(/^v/, "") : "0.0.0";
+
+  log.step("list-commits", `since=${tag || "repo-start"}`);
+  const commits = commitsSince(cwd, tag);
+  log.step("list-commits", `count=${commits.length}`);
+
+  log.step("analyze-commits");
   const releaseType = await analyzeCommits(pluginConfig, {
     commits,
-    logger,
-    cwd: repoRoot,
+    logger: analyzerLogger,
+    cwd,
     env: process.env,
   });
+  log.step("analyze-commits", `releaseType=${releaseType || "none"}`);
 
   if (!releaseType) {
-    setOutput("should_release", "false");
-    setOutput("next_version", "");
-    console.log("ℹ️  No release-worthy commits — skipping build + publish.");
-    return;
+    writeOutput("should_release", "false");
+    writeOutput("next_version", "");
+    log.info("No release-worthy commits — skipping build + publish.");
+    log.step("done", "ok no-release");
+    return {
+      shouldRelease: false,
+      nextVersion: "",
+      releaseType: null,
+      tag,
+      commitCount: commits.length,
+    };
   }
 
+  log.step("compute-next-version", `base=${baseVersion} type=${releaseType}`);
   const nextVersion = semver.inc(baseVersion, releaseType);
   if (!nextVersion) {
+    log.fail(
+      "compute-next-version",
+      `Could not compute next version from base "${baseVersion}" and release type "${releaseType}"`,
+    );
     throw new Error(
       `Could not compute next version from base "${baseVersion}" and release type "${releaseType}"`,
     );
   }
-  setOutput("should_release", "true");
-  setOutput("next_version", nextVersion);
-  console.log(`✅ Would release v${nextVersion} (${releaseType} from ${commits.length} commits since ${tag || "repo start"})`);
+  writeOutput("should_release", "true");
+  writeOutput("next_version", nextVersion);
+  log.info(
+    `Would release v${nextVersion} (${releaseType} from ${commits.length} commits since ${tag || "repo start"})`,
+  );
+  log.step("done", `ok next=v${nextVersion}`);
+  return {
+    shouldRelease: true,
+    nextVersion,
+    releaseType,
+    tag,
+    commitCount: commits.length,
+  };
 }
 
-main().catch((err) => {
-  // Non-zero exit only on real errors — never for a legitimate "no release".
-  console.error("release-precheck failed:", err.message);
-  process.exit(1);
-});
+async function main() {
+  await runPrecheck(defaultRepoRoot);
+}
+
+if (isMainModule(import.meta.url)) {
+  main().catch((err) => {
+    // Non-zero exit only on real errors — never for a legitimate "no release".
+    log.fail("main", err.message);
+    process.exit(1);
+  });
+}

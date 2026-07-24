@@ -1,24 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_NAME="capture-live"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-FIXTURES_DIR="$SCRIPT_DIR/../__fixtures__"
-BASELINE="$FIXTURES_DIR/baseline-live.jsonl"
+# shellcheck source=lib/log.sh
+source "$SCRIPT_DIR/lib/log.sh"
+# shellcheck source=lib/baseline-paths.sh
+source "$SCRIPT_DIR/lib/baseline-paths.sh"
 
-echo "Running claude --print to capture a live conversation..."
-claude --print "what is 1+1" > /dev/null 2>&1
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+CLAUDE_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 
-# Find the most recently modified .jsonl file
-LATEST=$(find ~/.claude/projects -name "*.jsonl" -not -path "*/memory/*" -not -path "*/tool-results/*" -type f -print0 | xargs -0 ls -t | head -1)
+script_step "init" "fixtures=${FIXTURES_DIR}"
+script_step "claude-run" "bin=${CLAUDE_BIN}"
+"$CLAUDE_BIN" --print "what is 1+1" > /dev/null 2>&1
+
+script_step "find-latest-jsonl" "projects=${CLAUDE_PROJECTS_DIR}"
+# Avoid GNU xargs running `ls` with no args when find is empty (lists cwd).
+LATEST=""
+while IFS= read -r -d '' file; do
+  if [ -z "$LATEST" ] || [ "$file" -nt "$LATEST" ]; then
+    LATEST="$file"
+  fi
+done < <(find "$CLAUDE_PROJECTS_DIR" -name "*.jsonl" -not -path "*/memory/*" -not -path "*/tool-results/*" -type f -print0 2>/dev/null)
 
 if [ -z "$LATEST" ]; then
-  echo "ERROR: No JSONL file found after running claude --print"
-  exit 1
+  script_fail "find-latest-jsonl" "No JSONL file found after running ${CLAUDE_BIN} --print" || exit 1
 fi
 
-echo "Captured: $LATEST"
-cp "$LATEST" "$BASELINE"
-echo "Saved to: $BASELINE"
+script_step "save-baseline" "from=${LATEST} to=${BASELINE_LIVE}"
+cp "$LATEST" "$BASELINE_LIVE"
 
-echo "Validating against previous baseline..."
+script_step "validate-live"
 npx tsx "$SCRIPT_DIR/validate-live.ts"
+script_step "done" "ok"
