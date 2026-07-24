@@ -4,46 +4,49 @@ import { tmpdir } from "node:os";
 import { join } from "path";
 
 const ROOT = join(__dirname, "../..");
-const CAPTURE = join(ROOT, "scripts/capture-live.sh");
-const UPDATE = join(ROOT, "scripts/update-baseline.sh");
+const SCRIPTS = join(ROOT, "scripts");
+const CAPTURE = join(SCRIPTS, "capture-live.sh");
+const UPDATE = join(SCRIPTS, "update-baseline.sh");
+const LIB = join(SCRIPTS, "lib");
+
+function stageScriptTree(): string {
+  const tree = mkdtempSync(join(tmpdir(), "scripts-tree-"));
+  mkdirSync(join(tree, "scripts/lib"), { recursive: true });
+  mkdirSync(join(tree, "__fixtures__"), { recursive: true });
+  execFileSync("cp", [CAPTURE, join(tree, "scripts/capture-live.sh")]);
+  execFileSync("cp", [UPDATE, join(tree, "scripts/update-baseline.sh")]);
+  execFileSync("cp", ["-R", LIB, join(tree, "scripts")]);
+  writeFileSync(join(tree, "scripts/validate-live.ts"), "export {};\n");
+  return tree;
+}
+
+function fakeBin(): { bin: string; claude: string } {
+  const bin = mkdtempSync(join(tmpdir(), "scripts-bin-"));
+  const claude = join(bin, "claude");
+  writeFileSync(claude, "#!/bin/sh\nexit 0\n");
+  chmodSync(claude, 0o755);
+  const npx = join(bin, "npx");
+  writeFileSync(npx, "#!/bin/sh\nexit 0\n");
+  chmodSync(npx, 0o755);
+  return { bin, claude };
+}
 
 describe("scripts/capture-live.sh + update-baseline.sh", () => {
-  it("bash -n passes for both shell scripts", () => {
-    for (const script of [CAPTURE, UPDATE]) {
+  it("bash -n passes for shell scripts and lib helpers", () => {
+    for (const script of [CAPTURE, UPDATE, join(LIB, "log.sh"), join(LIB, "baseline-paths.sh")]) {
       const r = spawnSync("bash", ["-n", script], { encoding: "utf8" });
       expect(r.status, r.stderr).toBe(0);
     }
   });
 
-  it("capture-live copies the newest jsonl into baseline-live.jsonl with mocks", () => {
+  it("capture-live copies the newest jsonl and emits step logs", () => {
     const home = mkdtempSync(join(tmpdir(), "capture-home-"));
-    const bin = mkdtempSync(join(tmpdir(), "capture-bin-"));
-    const fixtures = mkdtempSync(join(tmpdir(), "capture-fix-"));
+    const { bin, claude } = fakeBin();
     const projects = join(home, ".claude/projects/demo");
     mkdirSync(projects, { recursive: true });
+    writeFileSync(join(projects, "session.jsonl"), '{"type":"user","message":{"content":"hi"}}\n');
 
-    const jsonl = join(projects, "session.jsonl");
-    writeFileSync(jsonl, '{"type":"user","message":{"content":"hi"}}\n');
-
-    // Fake claude: succeed and leave the jsonl alone (already present)
-    const claude = join(bin, "claude");
-    writeFileSync(claude, "#!/bin/sh\nexit 0\n");
-    chmodSync(claude, 0o755);
-
-    // Fake validate-live via npx tsx path: override by wrapping PATH and
-    // providing a no-op tsx + script isn't easy; instead stub `npx`.
-    const npx = join(bin, "npx");
-    writeFileSync(npx, "#!/bin/sh\nexit 0\n");
-    chmodSync(npx, 0o755);
-
-    // Point the script's FIXTURES_DIR by running from a wrapper that sets SCRIPT_DIR tricks —
-    // capture-live derives FIXTURES_DIR from its own location. Copy scripts into a temp tree.
-    const tree = mkdtempSync(join(tmpdir(), "capture-tree-"));
-    mkdirSync(join(tree, "scripts"), { recursive: true });
-    mkdirSync(join(tree, "__fixtures__"), { recursive: true });
-    execFileSync("cp", [CAPTURE, join(tree, "scripts/capture-live.sh")]);
-    writeFileSync(join(tree, "scripts/validate-live.ts"), "export {};\n");
-
+    const tree = stageScriptTree();
     const r = spawnSync("bash", [join(tree, "scripts/capture-live.sh")], {
       encoding: "utf8",
       env: {
@@ -55,38 +58,30 @@ describe("scripts/capture-live.sh + update-baseline.sh", () => {
       },
     });
 
-    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
-    const baseline = join(tree, "__fixtures__/baseline-live.jsonl");
-    expect(readFileSync(baseline, "utf8")).toContain('"type":"user"');
+    const err = r.stderr;
+    expect(r.status, `${r.stdout}\n${err}`).toBe(0);
+    expect(err).toMatch(/\[capture-live\] step=init/);
+    expect(err).toMatch(/\[capture-live\] step=claude-run/);
+    expect(err).toMatch(/\[capture-live\] step=save-baseline/);
+    expect(err).toMatch(/\[capture-live\] step=done ok/);
+    expect(readFileSync(join(tree, "__fixtures__/baseline-live.jsonl"), "utf8")).toContain(
+      '"type":"user"',
+    );
 
     rmSync(home, { recursive: true, force: true });
     rmSync(bin, { recursive: true, force: true });
-    rmSync(fixtures, { recursive: true, force: true });
     rmSync(tree, { recursive: true, force: true });
   });
 
   it("update-baseline saves previous baseline then re-captures", () => {
     const home = mkdtempSync(join(tmpdir(), "update-home-"));
-    const bin = mkdtempSync(join(tmpdir(), "update-bin-"));
-    const tree = mkdtempSync(join(tmpdir(), "update-tree-"));
-    mkdirSync(join(tree, "scripts"), { recursive: true });
-    mkdirSync(join(tree, "__fixtures__"), { recursive: true });
-
+    const { bin, claude } = fakeBin();
+    const tree = stageScriptTree();
     writeFileSync(join(tree, "__fixtures__/baseline-live.jsonl"), '{"old":true}\n');
-    execFileSync("cp", [CAPTURE, join(tree, "scripts/capture-live.sh")]);
-    execFileSync("cp", [UPDATE, join(tree, "scripts/update-baseline.sh")]);
-    writeFileSync(join(tree, "scripts/validate-live.ts"), "export {};\n");
 
     const projects = join(home, ".claude/projects/demo");
     mkdirSync(projects, { recursive: true });
     writeFileSync(join(projects, "session.jsonl"), '{"new":true}\n');
-
-    const claude = join(bin, "claude");
-    writeFileSync(claude, "#!/bin/sh\nexit 0\n");
-    chmodSync(claude, 0o755);
-    const npx = join(bin, "npx");
-    writeFileSync(npx, "#!/bin/sh\nexit 0\n");
-    chmodSync(npx, 0o755);
 
     const r = spawnSync("bash", [join(tree, "scripts/update-baseline.sh")], {
       encoding: "utf8",
@@ -100,6 +95,9 @@ describe("scripts/capture-live.sh + update-baseline.sh", () => {
     });
 
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(r.stderr).toMatch(/\[update-baseline\] step=save-prev/);
+    expect(r.stderr).toMatch(/\[update-baseline\] step=capture-live/);
+    expect(r.stderr).toMatch(/\[update-baseline\] step=done ok/);
     expect(readFileSync(join(tree, "__fixtures__/baseline-live.prev.jsonl"), "utf8")).toContain(
       '"old":true',
     );
@@ -114,16 +112,9 @@ describe("scripts/capture-live.sh + update-baseline.sh", () => {
 
   it("capture-live errors when no jsonl exists", () => {
     const home = mkdtempSync(join(tmpdir(), "capture-empty-"));
-    const bin = mkdtempSync(join(tmpdir(), "capture-bin-empty-"));
-    const tree = mkdtempSync(join(tmpdir(), "capture-tree-empty-"));
-    mkdirSync(join(tree, "scripts"), { recursive: true });
-    mkdirSync(join(tree, "__fixtures__"), { recursive: true });
+    const { bin, claude } = fakeBin();
+    const tree = stageScriptTree();
     mkdirSync(join(home, ".claude/projects"), { recursive: true });
-    execFileSync("cp", [CAPTURE, join(tree, "scripts/capture-live.sh")]);
-
-    const claude = join(bin, "claude");
-    writeFileSync(claude, "#!/bin/sh\nexit 0\n");
-    chmodSync(claude, 0o755);
 
     const r = spawnSync("bash", [join(tree, "scripts/capture-live.sh")], {
       encoding: "utf8",
@@ -137,6 +128,7 @@ describe("scripts/capture-live.sh + update-baseline.sh", () => {
     });
 
     expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/FAIL step=find-latest-jsonl/);
     expect(`${r.stdout}\n${r.stderr}`).toMatch(/No JSONL file found/);
 
     rmSync(home, { recursive: true, force: true });

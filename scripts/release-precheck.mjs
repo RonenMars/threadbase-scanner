@@ -23,12 +23,14 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, appendFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { analyzeCommits } from "@semantic-release/commit-analyzer";
 import semver from "semver";
+import { createLogger } from "./lib/log.mjs";
+import { isMainModule, repoRootFromScript } from "./lib/module.mjs";
 
-const defaultRepoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const log = createLogger("release-precheck");
+const defaultRepoRoot = repoRootFromScript(import.meta.url);
 
 /** Run git and return trimmed stdout. */
 export function git(cwd, args) {
@@ -88,7 +90,7 @@ export function commitsSince(cwd = defaultRepoRoot, tag) {
 }
 
 /** Minimal logger matching the subset of signale the analyzer uses. */
-const logger = {
+const analyzerLogger = {
   log: () => {},
   error: (...args) => console.error(...args),
 };
@@ -104,22 +106,34 @@ export function setOutput(key, value, outputPath = process.env.GITHUB_OUTPUT) {
  */
 export async function runPrecheck(cwd = defaultRepoRoot, opts = {}) {
   const writeOutput = opts.setOutput ?? setOutput;
-  const pluginConfig = loadAnalyzerConfig(cwd);
-  const tag = lastStableTag(cwd);
-  const baseVersion = tag ? tag.replace(/^v/, "") : "0.0.0";
-  const commits = commitsSince(cwd, tag);
+  log.step("init", `cwd=${cwd}`);
 
+  log.step("load-analyzer-config");
+  const pluginConfig = loadAnalyzerConfig(cwd);
+
+  log.step("resolve-last-stable-tag");
+  const tag = lastStableTag(cwd);
+  log.step("resolve-last-stable-tag", `tag=${tag || "none"}`);
+  const baseVersion = tag ? tag.replace(/^v/, "") : "0.0.0";
+
+  log.step("list-commits", `since=${tag || "repo-start"}`);
+  const commits = commitsSince(cwd, tag);
+  log.step("list-commits", `count=${commits.length}`);
+
+  log.step("analyze-commits");
   const releaseType = await analyzeCommits(pluginConfig, {
     commits,
-    logger,
+    logger: analyzerLogger,
     cwd,
     env: process.env,
   });
+  log.step("analyze-commits", `releaseType=${releaseType || "none"}`);
 
   if (!releaseType) {
     writeOutput("should_release", "false");
     writeOutput("next_version", "");
-    console.log("ℹ️  No release-worthy commits — skipping build + publish.");
+    log.info("No release-worthy commits — skipping build + publish.");
+    log.step("done", "ok no-release");
     return {
       shouldRelease: false,
       nextVersion: "",
@@ -129,17 +143,23 @@ export async function runPrecheck(cwd = defaultRepoRoot, opts = {}) {
     };
   }
 
+  log.step("compute-next-version", `base=${baseVersion} type=${releaseType}`);
   const nextVersion = semver.inc(baseVersion, releaseType);
   if (!nextVersion) {
+    log.fail(
+      "compute-next-version",
+      `Could not compute next version from base "${baseVersion}" and release type "${releaseType}"`,
+    );
     throw new Error(
       `Could not compute next version from base "${baseVersion}" and release type "${releaseType}"`,
     );
   }
   writeOutput("should_release", "true");
   writeOutput("next_version", nextVersion);
-  console.log(
-    `✅ Would release v${nextVersion} (${releaseType} from ${commits.length} commits since ${tag || "repo start"})`,
+  log.info(
+    `Would release v${nextVersion} (${releaseType} from ${commits.length} commits since ${tag || "repo start"})`,
   );
+  log.step("done", `ok next=v${nextVersion}`);
   return {
     shouldRelease: true,
     nextVersion,
@@ -153,11 +173,10 @@ async function main() {
   await runPrecheck(defaultRepoRoot);
 }
 
-const entry = process.argv[1] ? resolve(process.argv[1]) : "";
-if (entry && fileURLToPath(import.meta.url) === entry) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     // Non-zero exit only on real errors — never for a legitimate "no release".
-    console.error("release-precheck failed:", err.message);
+    log.fail("main", err.message);
     process.exit(1);
   });
 }
