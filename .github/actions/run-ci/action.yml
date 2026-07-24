@@ -8,7 +8,7 @@ inputs:
   command:
     # GitHub composite-action inputs have no native enum/allowed-values schema,
     # so the allowed set is enforced by the "Validate command" step below.
-    description: "Which CI command to run. One of: lint | build | test"
+    description: "Which CI command to run. One of: lint | build | test | test:scripts"
     required: true
 
 runs:
@@ -20,9 +20,9 @@ runs:
         COMMAND: ${{ inputs.command }}
       run: |
         case "$COMMAND" in
-          lint|build|test) ;;
+          lint|build|test|test:scripts) ;;
           *)
-            echo "::error title=Invalid run-ci command::'$COMMAND' is not allowed. Expected one of: lint, build, test."
+            echo "::error title=Invalid run-ci command::'$COMMAND' is not allowed. Expected one of: lint, build, test, test:scripts."
             exit 1
             ;;
         esac
