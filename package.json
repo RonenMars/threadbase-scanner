@@ -1,6 +1,6 @@
 {
   "name": "@threadbase-sh/scanner",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Unified Claude Code conversation history scanner",
   "license": "MIT",
   "author": {
@@ -53,6 +53,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:scripts": "vitest run __tests__/scripts",
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",

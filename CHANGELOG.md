@@ -1,3 +1,5 @@
+## [0.12.1](https://github.com/RonenMars/threadbase-scanner/compare/v0.12.0...v0.12.1) (2026-07-24)
+
 ## [0.12.0](https://github.com/RonenMars/threadbase-scanner/compare/v0.11.5...v0.12.0) (2026-07-23)
 
 ## [0.11.5](https://github.com/RonenMars/threadbase-scanner/compare/v0.11.4...v0.11.5) (2026-07-22)
