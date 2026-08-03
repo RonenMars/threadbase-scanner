@@ -81,6 +81,43 @@ assert_contains "dry-run skips test" "$out" "step=test skip"
 assert_contains "dry-run done" "$out" "step=done ok"
 assert_not_contains "dry-run no block json on stderr mix" "$out" '"decision":"block"'
 
+# package-lock.json alone must not schedule biome (Biome ignores lockfiles and
+# fails when every provided path is ignored).
+out="$(
+  CLAUDE_PROJECT_DIR="$ROOT" \
+  VERIFY_STOP_DRY_RUN=1 \
+  VERIFY_STOP_CHANGED_FILES="package-lock.json" \
+  bash "$HOOK" 2>&1 >/dev/null || true
+)"
+assert_contains "lockfile-only skips type-check" "$out" "step=type-check skip"
+assert_contains "lockfile-only skips lint" "$out" "step=lint skip"
+assert_contains "lockfile-only skips test" "$out" "step=test skip"
+assert_contains "lockfile-only done" "$out" "step=done ok"
+
+# Mixed lockfile + real lintable file → biome still runs on the lintable set.
+out="$(
+  CLAUDE_PROJECT_DIR="$ROOT" \
+  VERIFY_STOP_DRY_RUN=1 \
+  VERIFY_STOP_CHANGED_FILES="package-lock.json package.json" \
+  bash "$HOOK" 2>&1 >/dev/null || true
+)"
+assert_contains "mixed lockfile schedules lint" "$out" "step=lint mode=scoped"
+
+# Real run: lockfile-only must not block (regression for biome "No files were processed")
+out="$(
+  CLAUDE_PROJECT_DIR="$ROOT" \
+  VERIFY_STOP_CHANGED_FILES="package-lock.json" \
+  bash "$HOOK" 2>&1
+)"
+stdout_only="$(
+  CLAUDE_PROJECT_DIR="$ROOT" \
+  VERIFY_STOP_CHANGED_FILES="package-lock.json" \
+  bash "$HOOK" 2>/dev/null
+)"
+assert_eq "lockfile success stdout empty" "$stdout_only" ""
+assert_contains "lockfile real lint skip" "$out" "step=lint skip"
+assert_contains "lockfile real done" "$out" "step=done ok"
+
 # Dry-run with a TS file → would type-check + lint + test
 out="$(
   CLAUDE_PROJECT_DIR="$ROOT" \

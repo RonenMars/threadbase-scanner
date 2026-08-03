@@ -162,7 +162,12 @@ is_ts() {
 }
 
 is_biome() {
+  # Lockfiles match *.json but Biome ignores them by default; passing only
+  # ignored paths makes `biome check` exit 1 with "No files were processed".
   case "$1" in
+    package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lock|bun.lockb)
+      return 1
+      ;;
     *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.json|*.jsonc) return 0 ;;
     *) return 1 ;;
   esac
