@@ -95,13 +95,25 @@ assert_not_contains "dry-run no block json on stderr mix" "$out" '"decision":"bl
 # biome.json scopes files.includes, so `biome check` on only-ignored paths exits
 # 1 with "No files were processed". The count= assertions keep these honest —
 # collect_changed drops paths missing on disk, which would pass vacuously.
-run_hook CLAUDE_PROJECT_DIR="$ROOT" VERIFY_STOP_CHANGED_FILES="package-lock.json"
+run_hook CLAUDE_PROJECT_DIR="$ROOT" VERIFY_STOP_CHANGED_FILES="package-lock.json" \
+  VERIFY_STOP_SKIP_TEST=1
 assert_contains "lockfile-only saw the file" "$HOOK_STDERR" "count=1"
 assert_eq "lockfile-only stdout empty" "$HOOK_STDOUT" ""
 assert_contains "lockfile-only skips type-check" "$HOOK_STDERR" "step=type-check skip"
 assert_contains "lockfile-only lint ok" "$HOOK_STDERR" "step=lint ok"
-assert_contains "lockfile-only skips test" "$HOOK_STDERR" "step=test skip"
 assert_contains "lockfile-only done" "$HOOK_STDERR" "step=done ok"
+
+# A dependency change must schedule the suite — a native-module ABI break shows
+# up nowhere else. Dry-run keeps the real suite out of this file.
+for dep_file in package.json package-lock.json; do
+  out="$(
+    CLAUDE_PROJECT_DIR="$ROOT" \
+    VERIFY_STOP_DRY_RUN=1 \
+    VERIFY_STOP_CHANGED_FILES="$dep_file" \
+    bash "$HOOK" 2>&1 >/dev/null || true
+  )"
+  assert_contains "$dep_file schedules test" "$out" "step=test cmd=npm test"
+done
 
 # Same class, non-lockfile: .mjs is lintable by extension but outside
 # files.includes. Skips the suite since *.mjs sets NEED_TEST=1.

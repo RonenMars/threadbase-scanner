@@ -237,6 +237,9 @@ else
     case "$rel" in
       src/*|__tests__/*|cli/*) NEED_TEST=1; break ;;
       *.ts|*.tsx|*.js|*.mjs|*.cjs) NEED_TEST=1; break ;;
+      # A dependency change is the one case the suite catches and nothing else
+      # does — a native-module ABI break (better-sqlite3) shows up only at run.
+      package.json|package-lock.json) NEED_TEST=1; break ;;
     esac
   done <"$CHANGED_FILE"
 fi
