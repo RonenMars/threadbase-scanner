@@ -240,6 +240,7 @@ else
       # A dependency change is the one case the suite catches and nothing else
       # does — a native-module ABI break (better-sqlite3) shows up only at run.
       package.json|package-lock.json) NEED_TEST=1; break ;;
+      */package.json|*/package-lock.json) NEED_TEST=1; break ;;
     esac
   done <"$CHANGED_FILE"
 fi

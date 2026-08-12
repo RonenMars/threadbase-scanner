@@ -55,7 +55,10 @@ run_hook() {
 }
 
 FIXTURE="$(mktemp -t verify-stop-fixture.XXXXXX).jsonl"
-cleanup() { rm -f "$FIXTURE"; }
+# collect_changed drops paths absent from disk, so a nested manifest has to
+# exist for the workspace patterns to be reachable at all.
+NESTED_PKG_DIR="$ROOT/.verify-stop-probe"
+cleanup() { rm -f "$FIXTURE"; rm -rf "$NESTED_PKG_DIR"; }
 trap cleanup EXIT
 
 # Last user turn, then assistant edits two files (and a Read that must be ignored)
@@ -115,10 +118,24 @@ for dep_file in package.json package-lock.json; do
   assert_contains "$dep_file schedules test" "$out" "step=test cmd=npm test"
 done
 
-# Same class, non-lockfile: .mjs is lintable by extension but outside
-# files.includes. Skips the suite since *.mjs sets NEED_TEST=1.
+# Same for a manifest below the root, so the patterns survive workspaces.
+mkdir -p "$NESTED_PKG_DIR" && printf '{"name":"probe"}\n' >"$NESTED_PKG_DIR/package.json"
+out="$(
+  CLAUDE_PROJECT_DIR="$ROOT" \
+  VERIFY_STOP_DRY_RUN=1 \
+  VERIFY_STOP_CHANGED_FILES=".verify-stop-probe/package.json" \
+  bash "$HOOK" 2>&1 >/dev/null || true
+)"
+assert_contains "nested manifest saw the file" "$out" "count=1"
+assert_contains "nested manifest schedules test" "$out" "step=test cmd=npm test"
+rm -rf "$NESTED_PKG_DIR"
+
+# Same class, non-lockfile: scripts/ is lintable by extension but outside
+# files.includes, so Biome ignores it. Keep this pointed at a path that stays
+# excluded — if scripts/ is ever added to includes, move it, don't delete it.
+# Skips the suite since *.mjs sets NEED_TEST=1.
 run_hook CLAUDE_PROJECT_DIR="$ROOT" \
-  VERIFY_STOP_CHANGED_FILES=".claude/hooks/changed-files-from-transcript.mjs" \
+  VERIFY_STOP_CHANGED_FILES="scripts/release-precheck.mjs" \
   VERIFY_STOP_SKIP_TEST=1
 assert_contains "ignored mjs saw the file" "$HOOK_STDERR" "count=1"
 assert_eq "ignored mjs stdout empty" "$HOOK_STDOUT" ""

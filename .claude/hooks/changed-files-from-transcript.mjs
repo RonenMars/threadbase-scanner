@@ -3,7 +3,7 @@
 // JSONL. Reads transcript path from argv[1] or stdin JSON hook fields
 // (transcript_path). Prints one path per line; empty stdout if none.
 
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 const WRITE_TOOLS = new Set([
@@ -76,9 +76,7 @@ function pathsFromRow(row) {
   for (const block of contentBlocks(row)) {
     if (!block || typeof block !== "object") continue;
     const isTool =
-      block.type === "tool_use" ||
-      block.type === "tool_call" ||
-      typeof block.name === "string";
+      block.type === "tool_use" || block.type === "tool_call" || typeof block.name === "string";
     if (!isTool) continue;
     const name = block.name ?? block.toolName ?? "";
     // Prefer known write tools; still accept path-bearing unknown tools.
