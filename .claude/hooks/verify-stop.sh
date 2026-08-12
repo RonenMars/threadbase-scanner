@@ -162,12 +162,7 @@ is_ts() {
 }
 
 is_biome() {
-  # Lockfiles match *.json but Biome ignores them by default; passing only
-  # ignored paths makes `biome check` exit 1 with "No files were processed".
   case "$1" in
-    package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lock|bun.lockb)
-      return 1
-      ;;
     *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.json|*.jsonc) return 0 ;;
     *) return 1 ;;
   esac
@@ -223,7 +218,10 @@ fi
 
 if [ "${#BIOME_FILES[@]}" -gt 0 ]; then
   log "step=lint mode=scoped files=${#BIOME_FILES[@]}"
-  run_cmd "lint" npx biome check "${BIOME_FILES[@]}"
+  # --no-errors-on-unmatched: biome.json scopes files.includes, so a changed set
+  # made only of paths Biome ignores (lockfiles, .claude/*, nested json) would
+  # otherwise exit 1 with "No files were processed" and block the turn.
+  run_cmd "lint" npx biome check --no-errors-on-unmatched "${BIOME_FILES[@]}"
 else
   log "step=lint skip (no changed lintable files)"
 fi

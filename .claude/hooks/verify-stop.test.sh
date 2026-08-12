@@ -44,6 +44,16 @@ assert_not_contains() {
   fi
 }
 
+# One real hook run, streams kept apart: stdout in $HOOK_STDOUT, stderr in
+# $HOOK_STDERR. Args are VAR=value pairs passed through to the hook.
+run_hook() {
+  local err
+  err="$(mktemp -t verify-stop-err.XXXXXX)"
+  HOOK_STDOUT="$(env "$@" bash "$HOOK" 2>"$err")"
+  HOOK_STDERR="$(cat "$err")"
+  rm -f "$err"
+}
+
 FIXTURE="$(mktemp -t verify-stop-fixture.XXXXXX).jsonl"
 cleanup() { rm -f "$FIXTURE"; }
 trap cleanup EXIT
@@ -81,42 +91,35 @@ assert_contains "dry-run skips test" "$out" "step=test skip"
 assert_contains "dry-run done" "$out" "step=done ok"
 assert_not_contains "dry-run no block json on stderr mix" "$out" '"decision":"block"'
 
-# package-lock.json alone must not schedule biome (Biome ignores lockfiles and
-# fails when every provided path is ignored).
-out="$(
-  CLAUDE_PROJECT_DIR="$ROOT" \
-  VERIFY_STOP_DRY_RUN=1 \
-  VERIFY_STOP_CHANGED_FILES="package-lock.json" \
-  bash "$HOOK" 2>&1 >/dev/null || true
-)"
-assert_contains "lockfile-only skips type-check" "$out" "step=type-check skip"
-assert_contains "lockfile-only skips lint" "$out" "step=lint skip"
-assert_contains "lockfile-only skips test" "$out" "step=test skip"
-assert_contains "lockfile-only done" "$out" "step=done ok"
+# Regression: a changed set of paths Biome ignores must not block the turn.
+# biome.json scopes files.includes, so `biome check` on only-ignored paths exits
+# 1 with "No files were processed". The count= assertions keep these honest —
+# collect_changed drops paths missing on disk, which would pass vacuously.
+run_hook CLAUDE_PROJECT_DIR="$ROOT" VERIFY_STOP_CHANGED_FILES="package-lock.json"
+assert_contains "lockfile-only saw the file" "$HOOK_STDERR" "count=1"
+assert_eq "lockfile-only stdout empty" "$HOOK_STDOUT" ""
+assert_contains "lockfile-only skips type-check" "$HOOK_STDERR" "step=type-check skip"
+assert_contains "lockfile-only lint ok" "$HOOK_STDERR" "step=lint ok"
+assert_contains "lockfile-only skips test" "$HOOK_STDERR" "step=test skip"
+assert_contains "lockfile-only done" "$HOOK_STDERR" "step=done ok"
 
-# Mixed lockfile + real lintable file → biome still runs on the lintable set.
-out="$(
-  CLAUDE_PROJECT_DIR="$ROOT" \
-  VERIFY_STOP_DRY_RUN=1 \
+# Same class, non-lockfile: .mjs is lintable by extension but outside
+# files.includes. Skips the suite since *.mjs sets NEED_TEST=1.
+run_hook CLAUDE_PROJECT_DIR="$ROOT" \
+  VERIFY_STOP_CHANGED_FILES=".claude/hooks/changed-files-from-transcript.mjs" \
+  VERIFY_STOP_SKIP_TEST=1
+assert_contains "ignored mjs saw the file" "$HOOK_STDERR" "count=1"
+assert_eq "ignored mjs stdout empty" "$HOOK_STDOUT" ""
+assert_contains "ignored mjs lint ok" "$HOOK_STDERR" "step=lint ok"
+assert_contains "ignored mjs done" "$HOOK_STDERR" "step=done ok"
+
+# Mixed ignored + processed path → biome gets both and still passes.
+run_hook CLAUDE_PROJECT_DIR="$ROOT" \
   VERIFY_STOP_CHANGED_FILES="package-lock.json package.json" \
-  bash "$HOOK" 2>&1 >/dev/null || true
-)"
-assert_contains "mixed lockfile schedules lint" "$out" "step=lint mode=scoped"
-
-# Real run: lockfile-only must not block (regression for biome "No files were processed")
-out="$(
-  CLAUDE_PROJECT_DIR="$ROOT" \
-  VERIFY_STOP_CHANGED_FILES="package-lock.json" \
-  bash "$HOOK" 2>&1
-)"
-stdout_only="$(
-  CLAUDE_PROJECT_DIR="$ROOT" \
-  VERIFY_STOP_CHANGED_FILES="package-lock.json" \
-  bash "$HOOK" 2>/dev/null
-)"
-assert_eq "lockfile success stdout empty" "$stdout_only" ""
-assert_contains "lockfile real lint skip" "$out" "step=lint skip"
-assert_contains "lockfile real done" "$out" "step=done ok"
+  VERIFY_STOP_SKIP_TEST=1
+assert_contains "mixed schedules both files" "$HOOK_STDERR" "step=lint mode=scoped files=2"
+assert_eq "mixed stdout empty" "$HOOK_STDOUT" ""
+assert_contains "mixed lint ok" "$HOOK_STDERR" "step=lint ok"
 
 # Dry-run with a TS file → would type-check + lint + test
 out="$(
