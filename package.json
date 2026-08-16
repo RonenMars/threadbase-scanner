@@ -84,5 +84,10 @@
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^4.1.9"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.27.7": true,
+    "fsevents@2.3.3": true
   }
 }
