@@ -34,7 +34,14 @@ import {
   type ScannerProvider,
 } from "./providers/provider";
 import { ThreadbaseProvider } from "./providers/threadbase";
-import { generateMatches } from "./search-matches";
+import {
+  appendSearchDelta,
+  combineSearchContent,
+  emptySearchDocument,
+  extractSearchDelta,
+  type SearchDocument,
+} from "./search-document";
+import { CONTENT_FIELD, generateMatches } from "./search-matches";
 import { resolveTier } from "./tiers";
 import type {
   ContentTier,
@@ -62,6 +69,20 @@ const DEFAULT_CONFIG_PATH = "~/.config/threadbase-scanner";
 // tests for isolation, and handy for pointing at an alternate DB in ops).
 function defaultDbPath(): string {
   return process.env.TB_SCANNER_DB ?? join(homedir(), ".config", "threadbase-scanner", "index.db");
+}
+
+// Flatten a search document for the in-memory index, tail-capped to the content
+// tier. Tail rather than head for the same reason the buckets themselves are
+// tail-biased: people search for what they did recently.
+//
+// This is where `persistent: false` deliberately diverges from SQLite. The
+// FlexSearch index is `tokenize: "forward"` (every prefix of every token, held
+// in RAM), so handing it the full ~128 KB budget per conversation would cost
+// hundreds of MB to GB. Extraction RULES are shared with FTS5; indexed VOLUME
+// is not. Raise this only against a measurement, never on speculation.
+function capForMemory(doc: SearchDocument, max: number): string {
+  const combined = combineSearchContent(doc);
+  return combined.length > max ? combined.slice(-max) : combined;
 }
 
 export interface PersistentConfig {
@@ -109,6 +130,10 @@ export class ConversationScanner {
   private sessionIdIndex: Map<string, ConversationMeta[]> = new Map();
   private projects: Set<string> = new Set();
   private indexer: SearchIndexer = new SearchIndexer();
+  // Search body per conversation for the in-memory path, already tail-capped to
+  // the content tier. Survives scan() so a statCache hit — which skips the parse
+  // entirely — can still index a body rather than an empty string.
+  private searchContents = new Map<string, string>();
   // Tier the most recent scan() ran with, so refreshFile() re-parses a single
   // file at the same content depth. Defaults to the standard tier.
   private lastTier: ContentTier = resolveTier("standard");
@@ -270,7 +295,9 @@ export class ConversationScanner {
       "scan: start",
     );
 
-    // Clear caches
+    // Clear caches. searchContents is deliberately NOT cleared: it is keyed by
+    // file path and only ever replaced by a fresh parse, so keeping it lets a
+    // statCache hit (which skips parsing) still index a real body.
     this.metadataCache.clear();
     this.conversationLRU.clear();
     this.sessionIdIndex.clear();
@@ -308,7 +335,12 @@ export class ConversationScanner {
               try {
                 const s = statSync(filePath);
                 if (s.mtimeMs === cached.stat.mtimeMs && s.size === cached.stat.size) {
-                  return cached.meta;
+                  // Unchanged file: whatever body we extracted last time is
+                  // still accurate, so reuse it instead of indexing nothing.
+                  return {
+                    meta: cached.meta,
+                    searchContent: this.searchContents.get(cached.meta.id),
+                  };
                 }
               } catch {
                 // file disappeared — fall through to parse which will return null
@@ -316,30 +348,37 @@ export class ConversationScanner {
             }
           }
           try {
-            const meta = await parseMetaWithProvider(provider, filePath, account, tier);
+            // Fold the search document over the same lines as the metadata
+            // parse — one read of the file, not two.
+            let doc = emptySearchDocument();
+            const meta = await parseMetaWithProvider(provider, filePath, account, tier, (entry) => {
+              doc = appendSearchDelta(doc, extractSearchDelta(entry));
+            });
             // The provider may already know its branch (Codex reads it from
             // session_meta). Only walk the filesystem when it doesn't.
             if (meta && meta.gitBranch === null && meta.projectPath) {
               meta.gitBranch = resolveGitBranch(meta.projectPath);
             }
-            return meta;
+            return { meta, searchContent: capForMemory(doc, tier.snippetMax) };
           } catch (err) {
             parseFailures++;
             log.warn({ filePath, account, provider: provider.name, err }, "scan: parse threw");
-            return null;
+            return { meta: null, searchContent: undefined };
           }
         }),
       );
 
       const batchMetas: ConversationMeta[] = [];
-      for (const meta of results) {
+      for (const { meta, searchContent } of results) {
         if (meta && meta.messageCount > 0) {
           this.metadataCache.set(meta.id, meta);
           this.addToSessionIndex(meta);
           this.projects.add(meta.projectPath);
           allMetas.push(meta);
           batchMetas.push(meta);
-          this.indexer.addDocument(meta);
+          const content = searchContent ?? this.searchContents.get(meta.id) ?? "";
+          this.searchContents.set(meta.id, content);
+          this.indexer.addDocument(meta, content);
         }
       }
 
@@ -386,14 +425,37 @@ export class ConversationScanner {
         const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
         await engine.indexAll(activeProfiles, { ...options, limit: undefined, offset: undefined });
       }
-      const metas = engine.searchMetas(query, (options.limit ?? 50) * 2);
-      results = query.trim()
-        ? metas.map((meta) => ({ meta, score: 1, matches: generateMatches(meta, query) }))
-        : metas.map((meta) => ({
+      if (query.trim()) {
+        // Filters go down into SQL so they run BEFORE the LIMIT. Applying them
+        // to an already-truncated hit list would report "no results" whenever
+        // the surviving conversations sit outside the unfiltered top-N — much
+        // more likely now that the corpus is wide.
+        const want = (options.limit ?? 50) + (options.offset ?? 0);
+        results = engine
+          .searchHits(query, want, {
+            account: options.account,
+            provider: options.provider,
+            project: options.project,
+            since: options.since ? parseSinceCutoff(options.since) : undefined,
+            include: options.include,
+          })
+          .map(({ meta, body }) => ({
             meta,
             score: 1,
-            matches: [{ field: "timestamp", snippet: meta.preview }],
+            matches: body
+              ? [
+                  { field: CONTENT_FIELD, snippet: body.snippet, highlights: body.highlights },
+                  ...generateMatches(meta, query).filter((m) => m.field !== "preview"),
+                ]
+              : generateMatches(meta, query),
           }));
+      } else {
+        results = engine.recentMetas((options.limit ?? 50) + (options.offset ?? 0)).map((meta) => ({
+          meta,
+          score: 1,
+          matches: [{ field: "timestamp", snippet: meta.preview }],
+        }));
+      }
     } else {
       if (this.indexer.getDocumentCount() === 0) {
         log.debug("search: index empty, triggering scan");
@@ -655,8 +717,11 @@ export class ConversationScanner {
     const resolvedAccount = account ?? previous?.account ?? "default";
 
     let meta: ConversationMeta | null = null;
+    let searchDoc = emptySearchDocument();
     try {
-      meta = await parseMeta(filePath, resolvedAccount, this.lastTier);
+      meta = await parseMeta(filePath, resolvedAccount, this.lastTier, (entry) => {
+        searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
+      });
     } catch (err) {
       log.warn({ filePath, err }, "refreshFile: parseMeta threw");
       meta = null;
@@ -678,6 +743,7 @@ export class ConversationScanner {
         this.metadataCache.delete(previous.id);
         this.removeFromSessionIndex(previous);
         this.indexer.removeDocument(previous.id);
+        this.searchContents.delete(previous.id);
       }
       log.debug({ filePath }, "refreshFile: dropped (no parseable messages)");
       return null;
@@ -691,10 +757,12 @@ export class ConversationScanner {
     this.metadataCache.set(meta.id, meta);
     this.addToSessionIndex(meta);
     this.projects.add(meta.projectPath);
+    const searchContent = capForMemory(searchDoc, this.lastTier.snippetMax);
+    this.searchContents.set(meta.id, searchContent);
     if (previous) {
-      this.indexer.updateDocument(meta);
+      this.indexer.updateDocument(meta, searchContent);
     } else {
-      this.indexer.addDocument(meta);
+      this.indexer.addDocument(meta, searchContent);
     }
 
     log.debug(

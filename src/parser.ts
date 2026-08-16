@@ -21,10 +21,13 @@ import type {
   TurnDuration,
 } from "./types";
 
+// `onEntry` lets a caller fold a second accumulator (the search document) over
+// the same lines without re-reading the file.
 export async function parseMeta(
   filePath: string,
   account: string,
   tier: ContentTier,
+  onEntry?: (entry: Record<string, unknown>) => void,
 ): Promise<ConversationMeta | null> {
   const log = getLogger();
   log.trace({ filePath, account, tier: tier.name }, "parseMeta: start");
@@ -47,6 +50,7 @@ export async function parseMeta(
         continue;
       }
       reduceLine(state, entry, tier);
+      onEntry?.(entry);
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseMeta: read failed");

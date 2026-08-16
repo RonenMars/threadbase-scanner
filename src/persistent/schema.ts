@@ -16,7 +16,9 @@
 // early-returns when the stored user_version >= SCHEMA_VERSION, so a new table
 // in SCHEMA_SQL is only reached on an existing DB if this number is bumped —
 // otherwise every DB already at v3 skips the migration and never gets the table.
-export const SCHEMA_VERSION = 4;
+// v5: FTS body split from one `content` column into text/thinking/tools, fed by
+// the tail-biased search document instead of meta.contentSnippet.
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -117,13 +119,27 @@ CREATE INDEX IF NOT EXISTS idx_conversations_account_recent ON conversations(acc
 CREATE INDEX IF NOT EXISTS idx_conversations_subagent_recent ON conversations(is_subagent, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_conversations_team_recent ON conversations(team_name, timestamp DESC);
 
--- Full-text search index over conversation content + metadata. Kept separate
--- from the metadata tables so list-screen queries stay small and fast.
--- source_path is UNINDEXED (stored, not tokenized) and links back to a
--- conversations row. One FTS row per conversation, replaced on each upsert.
+-- Full-text search index over conversation body + metadata. Kept separate from
+-- the metadata tables so list-screen queries stay small and fast. One FTS row
+-- per conversation, replaced on each upsert.
+--
+-- The row's rowid IS conversation_files.id. That is load-bearing, not cosmetic:
+-- FTS5's query planner only handles MATCH, rowid and rank, so any other
+-- constraint (including a source_path equality on an UNINDEXED column) has no
+-- index and linear-scans the whole table. At ~128 KB of body per row that would
+-- mean scanning the entire corpus on every append. Look rows up by rowid.
+-- source_path stays stored-but-UNINDEXED so a search hit can resolve back to a
+-- conversations row.
+--
+-- Body is three columns, not one: text > thinking > tools priority has to
+-- survive an append (a new user message belongs in the text column, not after
+-- the tool output already written). They are deliberately NOT concatenated into
+-- a fourth column - that would double-weight body hits and inflate bm25 length.
 CREATE VIRTUAL TABLE IF NOT EXISTS conversation_messages_fts USING fts5(
   source_path UNINDEXED,
-  content,
+  text,
+  thinking,
+  tools,
   project_name,
   session_id,
   session_name,

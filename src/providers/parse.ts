@@ -8,11 +8,15 @@ import type { ScannerProvider } from "./provider";
 // future offset-resumed incremental parse would run (createEmptyAccumulator →
 // reduceEntry per line → finalize), just starting from offset 0. Bad JSON lines
 // and unknown entry shapes are skipped, never fatal.
+// `onEntry` lets a caller fold a second, independent accumulator (the search
+// document) over the same lines without re-reading the file. It never affects
+// the provider's own reduce.
 export async function parseMetaWithProvider(
   provider: ScannerProvider,
   filePath: string,
   account: string,
   tier: ContentTier,
+  onEntry?: (entry: Record<string, unknown>) => void,
 ): Promise<ConversationMeta | null> {
   const log = getLogger();
   const acc = provider.createEmptyAccumulator();
@@ -32,6 +36,7 @@ export async function parseMetaWithProvider(
       }
       try {
         provider.reduceEntry(acc, entry, tier);
+        onEntry?.(entry);
       } catch (err) {
         // A provider reducer should never throw, but one bad line must not kill
         // the whole file.

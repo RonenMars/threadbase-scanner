@@ -23,12 +23,16 @@ export interface TailReadResult {
 // un-consumed: the offset is not advanced past it, so the next pass re-reads it
 // once it's complete. Offsets are byte offsets (Buffer.byteLength), never string
 // .length, so multibyte content stays aligned. (Spec §7.2–7.4.)
+// `onEntry` rides the same line loop as the metadata fold, so search-document
+// extraction costs no extra file read — important when a cold index or a v5
+// migration re-reads the whole corpus.
 export async function tailReduce(
   filePath: string,
   startOffset: number,
   startLine: number,
   state: ReducerState,
   tier: ContentTier,
+  onEntry?: (entry: Record<string, unknown>) => void,
 ): Promise<TailReadResult> {
   const stream = createReadStream(filePath, { start: startOffset, encoding: "utf8" });
 
@@ -49,7 +53,9 @@ export async function tailReduce(
 
       if (text.length > 0) {
         try {
-          reduceLine(state, JSON.parse(text), tier);
+          const entry = JSON.parse(text) as Record<string, unknown>;
+          reduceLine(state, entry, tier);
+          onEntry?.(entry);
         } catch {
           state.badJsonLines++;
         }

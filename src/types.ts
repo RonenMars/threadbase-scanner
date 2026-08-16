@@ -131,9 +131,21 @@ export interface SearchOptions extends ScanOptions {
   provider?: ProviderName;
 }
 
+// Half-open [start, end) character range into a SearchMatch.snippet marking one
+// matched term, so a client can emphasise it without parsing markup. Ranges
+// follow FTS token boundaries, not the query string: a prefix search for
+// "timeout" highlights the whole token "timeoutMs".
+export interface SearchHighlight {
+  start: number;
+  end: number;
+}
+
 export interface SearchMatch {
   field: string;
   snippet: string;
+  // Present on body hits (field === "content"), where the excerpt comes from
+  // FTS5 snippet(). Absent on metadata hits from generateMatches().
+  highlights?: SearchHighlight[];
 }
 
 export interface SearchResult {

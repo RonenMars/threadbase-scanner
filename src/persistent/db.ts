@@ -18,6 +18,10 @@ export function openDatabase(dbPath: string): DB {
   db.pragma("synchronous = NORMAL");
   db.pragma("temp_store = MEMORY");
   db.pragma("foreign_keys = ON");
+  // Let a reader briefly wait out a concurrent indexing write instead of failing
+  // immediately with SQLITE_BUSY. Operational resilience only — search recall is
+  // unaffected.
+  db.pragma("busy_timeout = 5000");
 
   runMigrations(db);
 

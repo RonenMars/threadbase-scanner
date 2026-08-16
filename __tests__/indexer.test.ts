@@ -35,12 +35,23 @@ describe("SearchIndexer", () => {
   });
 
   it("indexes and searches documents", () => {
-    indexer.addDocument(makeMeta({ id: "a", contentSnippet: "fix the authentication bug" }));
-    indexer.addDocument(makeMeta({ id: "b", contentSnippet: "add new feature" }));
+    indexer.addDocument(makeMeta({ id: "a" }), "fix the authentication bug");
+    indexer.addDocument(makeMeta({ id: "b" }), "add new feature");
 
     const results = indexer.search("authentication");
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0].meta.id).toBe("a");
+  });
+
+  it("indexes the passed search document, not meta.contentSnippet", () => {
+    // contentSnippet is a head-biased 5 KB preview, no longer the search corpus.
+    indexer.addDocument(
+      makeMeta({ id: "a", contentSnippet: "SNIPPETONLYNEEDLE" }),
+      "the actual indexed body",
+    );
+
+    expect(indexer.search("SNIPPETONLYNEEDLE")).toHaveLength(0);
+    expect(indexer.search("indexed").length).toBeGreaterThanOrEqual(1);
   });
 
   it("searches by project name", () => {
@@ -80,11 +91,33 @@ describe("SearchIndexer", () => {
   it("generates context-aware preview snippets", () => {
     const longContent =
       "The quick brown fox jumped over the lazy dog and then proceeded to fix the authentication bug in the login module which was causing failures";
-    indexer.addDocument(makeMeta({ id: "a", contentSnippet: longContent }));
+    indexer.addDocument(makeMeta({ id: "a" }), longContent);
 
     const results = indexer.search("authentication");
     expect(results.length).toBeGreaterThanOrEqual(1);
     expect(results[0].matches.length).toBeGreaterThanOrEqual(1);
     expect(results[0].matches[0].snippet).toContain("authentication");
+  });
+
+  it("labels a body hit as `content` and returns highlight ranges into the snippet", () => {
+    indexer.addDocument(makeMeta({ id: "a" }), "socket reconnect timeout was not cleared");
+
+    const [result] = indexer.search("timeout");
+    const match = result.matches[0];
+
+    const highlights = match.highlights ?? [];
+    expect(match.field).toBe("content");
+    expect(highlights.length).toBeGreaterThanOrEqual(1);
+
+    const { start, end } = highlights[0];
+    expect(match.snippet.slice(start, end).toLowerCase()).toBe("timeout");
+  });
+
+  it("falls back to metadata matches when only metadata hits", () => {
+    indexer.addDocument(makeMeta({ id: "a", projectName: "frontend-app" }), "unrelated body");
+
+    const [result] = indexer.search("frontend");
+    expect(result.matches[0].field).toBe("projectName");
+    expect(result.matches.every((m) => m.field !== "preview")).toBe(true);
   });
 });
