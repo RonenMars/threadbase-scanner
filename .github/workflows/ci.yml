@@ -9,7 +9,7 @@ on:
 
 jobs:
   # Decide whether to skip the heavy CI work. The required status checks
-  # (Lint, Test (Node 20), Test (Node 22)) are enforced by branch protection,
+  # (Lint, Test (Node 22), Test (Node 24)) are enforced by branch protection,
   # so the jobs below must ALWAYS run and report success — a job skipped via a
   # job-level `if:` reports "skipped", which does NOT satisfy a required check
   # and would leave the PR un-mergeable forever. Instead each job checks out
@@ -68,7 +68,7 @@ jobs:
         if: needs.gate.outputs.skip != 'true'
         uses: ./.github/actions/run-ci
         with:
-          node-version: 20
+          node-version: 22
           command: lint
 
   build:
@@ -82,7 +82,7 @@ jobs:
         if: needs.gate.outputs.skip != 'true'
         uses: ./.github/actions/run-ci
         with:
-          node-version: 20
+          node-version: 22
           command: build
 
       - if: needs.gate.outputs.skip != 'true'
@@ -97,7 +97,7 @@ jobs:
     needs: [gate, lint, setup]
     strategy:
       matrix:
-        node-version: [20, 22, 24]
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
@@ -119,5 +119,5 @@ jobs:
         if: needs.gate.outputs.skip != 'true'
         uses: ./.github/actions/run-ci
         with:
-          node-version: 20
+          node-version: 22
           command: test:scripts
