@@ -10,6 +10,7 @@ import {
   CODEX_CLI_PROVIDER,
   type ScannerProvider,
 } from "../providers/provider";
+import { appendSearchDelta, emptySearchDocument, extractSearchDelta } from "../search-document";
 import { resolveTier } from "../tiers";
 import type {
   ConversationMeta,
@@ -17,6 +18,7 @@ import type {
   GetConversationPageOptions,
   Profile,
   ScanOptions,
+  SearchHighlight,
 } from "../types";
 import { classify, type FileChange, fingerprint } from "./cursor";
 import { type DB, openDatabase } from "./db";
@@ -27,11 +29,17 @@ import { buildCheckpoints, CHECKPOINT_INTERVAL, readPage } from "./paged-reader"
 import { CheckpointsRepo } from "./repositories/checkpoints.repo";
 import { ConversationFilesRepo } from "./repositories/conversation-files.repo";
 import { ConversationsRepo } from "./repositories/conversations.repo";
-import { FtsRepo } from "./repositories/fts.repo";
+import { FtsRepo, type FtsSearchFilters } from "./repositories/fts.repo";
 import { ScannedDirsRepo } from "./repositories/scanned-dirs.repo";
 import { buildSidecar, writeSidecar } from "./sidecar";
 
 const BATCH_SIZE = 12;
+
+export interface EngineSearchHit {
+  meta: ConversationMeta;
+  // Null when only metadata matched — the caller falls back to generateMatches.
+  body: { snippet: string; highlights: SearchHighlight[] } | null;
+}
 
 // Persistent indexing engine. Owns the SQLite connection and the discover ->
 // classify -> tail-read -> upsert pipeline. Query helpers return ConversationMeta
@@ -242,9 +250,17 @@ export class PersistentEngine {
     const startOffset = resume ? existing.last_indexed_offset : 0;
     const startLine = resume ? existing.last_indexed_line : 0;
 
+    // Search extraction is a sibling fold over the same lines as the metadata
+    // reducer — no second read of the file, and an append only ever extracts
+    // from the newly-read region.
+    let searchDelta = emptySearchDocument();
+    const collectSearch = (entry: Record<string, unknown>) => {
+      searchDelta = appendSearchDelta(searchDelta, extractSearchDelta(entry));
+    };
+
     let result: TailReadResult;
     try {
-      result = await tailReduce(filePath, startOffset, startLine, state, tier);
+      result = await tailReduce(filePath, startOffset, startLine, state, tier, collectSearch);
     } catch (err) {
       log.warn({ filePath, err }, "persistent: tail read failed");
       return { meta: null, change };
@@ -259,9 +275,22 @@ export class PersistentEngine {
 
     const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
     const fileId = this.files.ensure(filePath, account);
+
+    // A resumed fold extends the buckets already in FTS; a from-0 fold replaces
+    // them. Tail-append means a full bucket still admits the new material and
+    // drops its oldest instead of freezing.
+    const base = resume
+      ? (this.fts.readDocument(fileId) ?? emptySearchDocument())
+      : emptySearchDocument();
+    const searchDoc = appendSearchDelta(base, searchDelta);
+
     const upsert = this.db.transaction(() => {
       this.conversations.upsert(fileId, meta, state.pageMessageCount);
-      this.fts.upsert(meta);
+      // Re-tokenizing ~128 KB is the expensive part of an append; skip it when
+      // the row (body + metadata) would come out identical.
+      if (!this.fts.isCurrent(fileId, meta, searchDoc)) {
+        this.fts.upsert(fileId, meta, searchDoc);
+      }
       // Checkpoints cover the file's immutable prefix, so an append (a resumed
       // fold) leaves them valid — drop them only when the fold restarted from
       // offset 0 (truncate/replace/new). They're rebuilt lazily on page access.
@@ -318,7 +347,12 @@ export class PersistentEngine {
   ): Promise<ConversationMeta | null> {
     const log = getLogger();
 
-    const meta = await parseMetaWithProvider(provider, filePath, account, tier);
+    // Codex always reparses from byte 0, so the search document is rebuilt whole
+    // from the same pass rather than tail-extended.
+    let searchDoc = emptySearchDocument();
+    const meta = await parseMetaWithProvider(provider, filePath, account, tier, (entry) => {
+      searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
+    });
     if (!meta) {
       this.markDeleted(filePath);
       return null;
@@ -333,7 +367,9 @@ export class PersistentEngine {
     const fileId = this.files.ensure(filePath, account);
     const upsert = this.db.transaction(() => {
       this.conversations.upsert(fileId, meta, meta.messageCount);
-      this.fts.upsert(meta);
+      if (!this.fts.isCurrent(fileId, meta, searchDoc)) {
+        this.fts.upsert(fileId, meta, searchDoc);
+      }
       this.checkpoints.remove(filePath);
       this.files.updateCursor(fileId, {
         sizeBytes: stat.size,
@@ -361,7 +397,7 @@ export class PersistentEngine {
     if (!existing) return;
     const tx = this.db.transaction(() => {
       this.conversations.deleteByFileId(existing.id);
-      this.fts.remove(filePath);
+      this.fts.remove(existing.id);
       this.checkpoints.remove(filePath);
       this.files.setStatus(existing.id, "deleted");
     });
@@ -382,20 +418,25 @@ export class PersistentEngine {
     return this.conversations.getAllBySessionId(sessionId);
   }
 
-  // Ranked metas matching the FTS query, best first. Empty query returns the
-  // most recent conversations (mirroring the in-memory indexer's empty-query
-  // behavior). Resolves each FTS hit to its active conversation row.
-  searchMetas(query: string, limit: number): ConversationMeta[] {
-    if (!query.trim()) {
-      return this.conversations.recent(limit);
+  // Ranked hits matching the FTS query, best first, each already resolved to its
+  // active conversation row and carrying the body excerpt when the match was in
+  // the conversation body.
+  //
+  // Filters are passed down into SQL rather than applied to the result: with a
+  // wide corpus, filtering an already-LIMITed list drops conversations that
+  // would have matched.
+  searchHits(query: string, limit: number, filters: FtsSearchFilters = {}): EngineSearchHit[] {
+    const hits: EngineSearchHit[] = [];
+    for (const hit of this.fts.search(query, limit, filters)) {
+      const meta = this.conversations.getBySourcePath(hit.sourcePath);
+      if (meta) hits.push({ meta, body: hit.body });
     }
-    const paths = this.fts.search(query, limit);
-    const metas: ConversationMeta[] = [];
-    for (const path of paths) {
-      const meta = this.conversations.getBySourcePath(path);
-      if (meta) metas.push(meta);
-    }
-    return metas;
+    return hits;
+  }
+
+  // Empty-query listing, mirroring the in-memory indexer's behavior.
+  recentMetas(limit: number): ConversationMeta[] {
+    return this.conversations.recent(limit);
   }
 
   getProjects(): string[] {

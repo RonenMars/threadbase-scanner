@@ -38,6 +38,42 @@ export function runMigrations(db: Database): void {
     db.exec("UPDATE conversations SET provider = 'claude-code' WHERE provider = 'threadbase'");
   }
 
+  // v4 → v5: the FTS body split from a single `content` column (fed by the 5 KB
+  // head-biased meta.contentSnippet) into text/thinking/tools columns fed by the
+  // tail-biased search document. CREATE VIRTUAL TABLE IF NOT EXISTS cannot
+  // reshape an existing table, so drop it and let SCHEMA_SQL recreate it.
+  //
+  // Then force every known file to reindex from byte 0. classify() already
+  // returns "reindex" whenever last_indexed_offset === 0, so resetting the
+  // cursor is the entire trigger. Without it an unchanged conversation would
+  // keep its old FTS row forever — nothing would ever append to it, so nothing
+  // would rebuild it.
+  //
+  // Deliberately cheap: no JSONL is read here. Opening the database must stay in
+  // milliseconds; the actual re-parse happens in the next indexAll (newest files
+  // first), not inside a pragma migration.
+  if (current >= 1 && current < 5) {
+    db.exec("DROP TABLE IF EXISTS conversation_messages_fts");
+    // A database old enough to still be at v1 can predate some cursor columns,
+    // and CREATE TABLE IF NOT EXISTS below won't add them — so reset only what
+    // this database actually has.
+    if (tableExists(db, "conversation_files")) {
+      const assignments: string[] = [];
+      if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+        assignments.push("last_indexed_offset = 0");
+      }
+      if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+        assignments.push("last_indexed_line = 0");
+      }
+      if (hasColumn(db, "conversation_files", "reducer_state")) {
+        assignments.push("reducer_state = NULL");
+      }
+      if (assignments.length > 0) {
+        db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+      }
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);

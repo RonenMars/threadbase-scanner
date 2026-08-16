@@ -187,6 +187,8 @@ describe("incremental byte-offset indexing", () => {
       expect.any(Number),
       expect.anything(),
       expect.anything(),
+      // Search-document extraction rides the same read as the metadata fold.
+      expect.any(Function),
     );
     expect(meta?.messageCount).toBe(4);
     tailReduceSpy.mockRestore();
@@ -210,7 +212,14 @@ describe("incremental byte-offset indexing", () => {
     const meta = await scanner.refreshFile(file);
     scanner.close();
 
-    expect(tailReduceSpy).toHaveBeenCalledWith(file, 0, 0, expect.anything(), expect.anything());
+    expect(tailReduceSpy).toHaveBeenCalledWith(
+      file,
+      0,
+      0,
+      expect.anything(),
+      expect.anything(),
+      expect.any(Function),
+    );
     expect(meta?.messageCount).toBe(1);
     expect(meta?.preview).toContain("fresh start");
     tailReduceSpy.mockRestore();
