@@ -53,7 +53,14 @@ Parity is enforced: `__tests__/persistent-scan.test.ts` asserts identical `ScanR
 
 ### Distribution model
 
-Published to **public npm** as `@threadbase-sh/scanner` (semantic-release). `dist/` is gitignored and built by the `prepare` script. Note `better-sqlite3` is a native dependency (ships prebuilt binaries; falls back to node-gyp).
+Published to **public npm** as `@threadbase-sh/scanner` (semantic-release). `dist/` is gitignored and built by the `prepare` script.
+
+`better-sqlite3` is a native dependency, and v13 ships prebuilt binaries **inside the tarball** — a normal `npm install` needs no compiler and no install script. That is why the floor is v13 and `engines` is `>=22`: v12 shipped an *empty* `prebuilds/` directory and produced its binary only by running `node-gyp` from its install script, which npm 12 blocks by default. The result was a package that imported cleanly and then threw on first use, with an error that reads like an ABI mismatch (see `openDatabase()`'s fail-fast message in `src/persistent/db.ts`).
+
+Two consequences worth knowing:
+
+- **v13 still trips npm's blocked-scripts list.** It declares no `install` script, but it ships a `binding.gyp`, and npm synthesises `node-gyp rebuild` from that. Being listed as blocked is harmless — the prebuild satisfies the require. Forcing scripts **on** in an environment without a C++ toolchain is what breaks, because npm then compiles instead of using the prebuild.
+- **It has no runtime companions.** v12 needed `bindings` and `file-uri-to-path`; v13 depends only on `node-addon-api` (compile-time headers), and the prebuilt binary requires nothing beyond `fs` and `path`. Anything that copies the addon to a deploy target can copy it alone.
 
 A previous attempt at publishing to npm with V8 bytecode (`bytenode`) protection was abandoned after discovering bytenode `.jsc` files are not cross-platform. See `docs/plans/bytenode-npm-package.md` for the full lessons-learned record.
 
