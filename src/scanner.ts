@@ -65,10 +65,40 @@ import { type IndexJob, IndexQueue } from "./watcher/index-queue";
 const BATCH_SIZE = 12;
 const DEFAULT_CONFIG_PATH = "~/.config/threadbase-scanner";
 
-// Default persistent-index location. Overridable via TB_SCANNER_DB (used by
-// tests for isolation, and handy for pointing at an alternate DB in ops).
+// A test process that reaches the default path writes its fixtures into the
+// developer's real index. Measured on one live machine: 579 of 1,144 rows were
+// test fixtures, 357 of them from tb-streamer's suite, which constructs
+// scanners with no dbPath and has no TB_SCANNER_DB of its own. Those rows are
+// indistinguishable from real conversations in every coverage query, so they
+// silently corrupt any measurement taken of the index — including the
+// completeness metrics a durable archive would report.
+//
+// The env var already existed for this; it just failed open. Failing loudly is
+// what makes the omission visible at the moment it is introduced rather than a
+// year later, and it belongs here rather than in each consumer's setup because
+// the scanner is the thing that knows which path is the real one.
+function isTestProcess(): boolean {
+  return (
+    Boolean(process.env.VITEST) ||
+    Boolean(process.env.JEST_WORKER_ID) ||
+    process.env.NODE_ENV === "test"
+  );
+}
+
+// Default persistent-index location. Overridable via TB_SCANNER_DB (required
+// under a test runner, and handy for pointing at an alternate DB in ops).
 function defaultDbPath(): string {
-  return process.env.TB_SCANNER_DB ?? join(homedir(), ".config", "threadbase-scanner", "index.db");
+  const override = process.env.TB_SCANNER_DB;
+  if (override) return override;
+  if (isTestProcess()) {
+    throw new Error(
+      "TB_SCANNER_DB must be set under a test runner. Refusing to open the default index at " +
+        "~/.config/threadbase-scanner/index.db, because test fixtures written there are " +
+        "indistinguishable from real conversations and corrupt every measurement of the index. " +
+        "Point it at a temp directory in your test setup, or pass persistent.dbPath explicitly.",
+    );
+  }
+  return join(homedir(), ".config", "threadbase-scanner", "index.db");
 }
 
 // Flatten a search document for the in-memory index, tail-capped to the content
