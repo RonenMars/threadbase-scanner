@@ -643,7 +643,15 @@ export class ConversationScanner {
     account: string | undefined,
     options: GetConversationPageOptions,
   ): Promise<SingleFilePage | null> {
-    const conversation = await parseConversation(filePath, account ?? "default");
+    // There is no index row on this path — it is the cold/fallback read — so
+    // sniff the file for its provider. Handing a Codex rollout to
+    // parseConversation() returns nothing, which reads to the caller as a
+    // conversation that does not exist.
+    const provider = await this.resolveProviderForFile(filePath, null);
+    const conversation =
+      provider?.name === CODEX_CLI_PROVIDER
+        ? await parseCodexConversation(filePath, account ?? "default")
+        : await parseConversation(filePath, account ?? "default");
     if (!conversation) return null;
 
     const { messages } = conversation;
@@ -748,10 +756,17 @@ export class ConversationScanner {
 
     let meta: ConversationMeta | null = null;
     let searchDoc = emptySearchDocument();
+    const onEntry = (entry: Record<string, unknown>) => {
+      searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
+    };
+    // Same provider resolution the persistent branch above does: without it a
+    // Codex file is folded by the Threadbase reducer, yields no meta, and is
+    // dropped from the index by the eviction below.
+    const provider = await this.resolveProviderForFile(filePath, previous ?? null);
     try {
-      meta = await parseMeta(filePath, resolvedAccount, this.lastTier, (entry) => {
-        searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
-      });
+      meta = provider
+        ? await parseMetaWithProvider(provider, filePath, resolvedAccount, this.lastTier, onEntry)
+        : await parseMeta(filePath, resolvedAccount, this.lastTier, onEntry);
     } catch (err) {
       log.warn({ filePath, err }, "refreshFile: parseMeta threw");
       meta = null;
