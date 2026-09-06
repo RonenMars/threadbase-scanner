@@ -24,7 +24,7 @@ export {
   resolveConfigDir,
   saveProfiles,
 } from "./profiles";
-export { CodexCliProvider } from "./providers/codex-cli";
+export { CodexCliProvider, parseCodexJsonlLine } from "./providers/codex-cli";
 export type {
   DiscoveredConversationFile,
   ScannerProvider,

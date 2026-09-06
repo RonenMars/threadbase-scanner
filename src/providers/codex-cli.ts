@@ -148,6 +148,36 @@ function extractCodexText(content: unknown): string {
     .join(" ");
 }
 
+// Map one raw Codex rollout JSONL line to the message it renders as, or null
+// when it renders as nothing (session_meta, event_msg, tool calls,
+// developer/system roles, an empty-after-cleanSystemTags body, malformed JSON).
+// Stateless — a Codex line carries everything the decision needs — and tolerant
+// by construction: it never throws. parseCodexConversation() below delegates to
+// it so the "which lines render as messages" rule has exactly one definition.
+export function parseCodexJsonlLine(line: string): ConversationMessage | null {
+  if (!line.trim()) return null;
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return codexEntryToMessage(entry);
+}
+
+// Same decision, on an already-parsed entry — lets parseCodexConversation reuse
+// its single JSON.parse (it also needs session_meta and the timestamp).
+function codexEntryToMessage(entry: Record<string, unknown>): ConversationMessage | null {
+  const payload = entry.payload as Record<string, unknown> | undefined;
+  if (!payload || typeof payload !== "object") return null;
+  if (entry.type !== "response_item" || payload.type !== "message") return null;
+  const role = payload.role;
+  if (role !== "user" && role !== "assistant") return null;
+  const text = extractCodexText(payload.content);
+  if (!text) return null;
+  return { role: role as MessageSender, text, timestamp: asString(entry.timestamp) };
+}
+
 // Fold one Codex rollout line into the accumulator. Tolerant by construction:
 // any line it doesn't recognise is ignored, never thrown on.
 export function reduceCodexEntry(
@@ -301,14 +331,11 @@ export async function parseCodexConversation(
         if (!cwd) cwd = asString(payload.cwd);
         continue;
       }
-      if (entry.type !== "response_item" || payload.type !== "message") continue;
-      const role = payload.role;
-      if (role !== "user" && role !== "assistant") continue;
-      const text = extractCodexText(payload.content);
-      if (!text) continue;
-      messages.push({ role: role as MessageSender, text, timestamp: ts });
-      textParts.push(text);
-      if (role === "user") lastUserText = text;
+      const message = codexEntryToMessage(entry);
+      if (!message) continue;
+      messages.push(message);
+      textParts.push(message.text);
+      if (message.role === "user") lastUserText = message.text;
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseCodexConversation: read failed");
