@@ -31,6 +31,8 @@ export interface CodexAccumulator {
   latestTimestamp: string;
   messageCount: number;
   lastMessageSender: MessageSender;
+  isSubagent: boolean;
+  parentSessionUuid: string | null;
   firstUser: MessageSnapshot | null;
   lastUser: MessageSnapshot | null;
   lastAssistant: MessageSnapshot | null;
@@ -101,6 +103,8 @@ export class CodexCliProvider implements ScannerProvider<CodexAccumulator> {
       latestTimestamp: "",
       messageCount: 0,
       lastMessageSender: "user",
+      isSubagent: false,
+      parentSessionUuid: null,
       firstUser: null,
       lastUser: null,
       lastAssistant: null,
@@ -198,6 +202,10 @@ export function reduceCodexEntry(
     if (!acc.cwd) acc.cwd = asString(payload.cwd);
     const git = payload.git as Record<string, unknown> | undefined;
     if (acc.gitBranch === null && git?.branch) acc.gitBranch = asString(git.branch) || null;
+    if (!acc.isSubagent && isSubagentSource(payload.source)) {
+      acc.isSubagent = true;
+      acc.parentSessionUuid = parentThreadId(payload.source);
+    }
     return;
   }
 
@@ -280,8 +288,10 @@ export function finalizeCodexMeta(
     contentSnippet: acc.snippetParts.join(" "),
     gitBranch: acc.gitBranch,
     model: acc.model,
-    isSubagent: false,
+    isSubagent: acc.isSubagent,
+    // Codex exposes no path-shaped parent, and no per-child id of its own.
     parentSessionId: null,
+    parentSessionUuid: acc.parentSessionUuid ?? undefined,
     isTeammate: false,
     teamName: null,
     toolNames: acc.toolNames,
@@ -293,6 +303,28 @@ export function finalizeCodexMeta(
 
 function getShortProjectName(fullPath: string): string {
   return fullPath.split("/").filter(Boolean).slice(-3).join("/");
+}
+
+// `session_meta.payload.source` is either a plain string for a top-level session
+// ("cli", "vscode", "exec", …) or an object naming how the child was spawned.
+// The `subagent` VALUE is not always a dict — {"subagent":"review"} is a real
+// shape on disk alongside {"subagent":{"thread_spawn":{…}}} and
+// {"subagent":{"other":"guardian"}} — so presence of the key is the test, not
+// its shape. Unknown string sources are treated as ordinary sessions rather
+// than failing, so a future Codex adds a source without breaking the scan.
+function isSubagentSource(source: unknown): boolean {
+  return typeof source === "object" && source !== null && "subagent" in source;
+}
+
+// Only thread_spawn names a parent. A subagent without a discoverable parent is
+// still a subagent — it just has no parent id to report.
+function parentThreadId(source: unknown): string | null {
+  if (!isSubagentSource(source)) return null;
+  const subagent = (source as { subagent: unknown }).subagent;
+  if (typeof subagent !== "object" || subagent === null) return null;
+  const spawn = (subagent as Record<string, unknown>).thread_spawn;
+  if (typeof spawn !== "object" || spawn === null) return null;
+  return asString((spawn as Record<string, unknown>).parent_thread_id) || null;
 }
 
 // Full conversation parse for a Codex rollout session — the Codex analogue of

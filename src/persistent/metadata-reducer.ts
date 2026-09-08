@@ -28,6 +28,11 @@ export interface ReducerState {
   // the page total for bounded reads, since metadata messageCount differs.
   pageMessageCount: number;
   lastMessageSender: MessageSender;
+  // Provider-created child ("sidechain") identity, lifted from the explicit
+  // per-line JSONL fields. A sidechain line carries its PARENT's id in
+  // `sessionId`, so `agentId` is the only thing that distinguishes siblings.
+  agentId: string;
+  isSidechain: boolean;
   isTeammate: boolean;
   firstUserSeen: boolean;
   firstMessage: MessageSnapshot | null;
@@ -51,6 +56,8 @@ export function initialReducerState(): ReducerState {
     model: null,
     messageCount: 0,
     lastMessageSender: "user",
+    agentId: "",
+    isSidechain: false,
     isTeammate: false,
     firstUserSeen: false,
     firstMessage: null,
@@ -78,6 +85,8 @@ export function reduceLine(
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
   if (entry.slug && !state.sessionName) state.sessionName = entry.slug as string;
   if (entry.teamName && !state.teamName) state.teamName = entry.teamName as string;
+  if (entry.agentId && !state.agentId) state.agentId = entry.agentId as string;
+  if (entry.isSidechain === true) state.isSidechain = true;
   if (entry.timestamp) {
     const ts = entry.timestamp as string;
     if (!state.latestTimestamp || ts > state.latestTimestamp) state.latestTimestamp = ts;
@@ -154,9 +163,14 @@ export function finalizeMeta(
 ): ConversationMeta | null {
   if (state.messageCount === 0) return null;
 
-  const isSubagent = filePath.includes("/subagents/");
+  // The explicit JSONL fields are authoritative and platform-independent. The
+  // path shape is only a fallback for a transcript that carries neither.
+  const isSidechain = state.isSidechain && !!state.agentId;
+  const isSubagentPath = SUBAGENT_PATH_RE.test(filePath);
+  const isSubagent = isSidechain || isSubagentPath;
+
   let parentSessionId: string | null = null;
-  if (isSubagent) {
+  if (isSubagentPath) {
     const uuidDir = dirname(dirname(filePath));
     parentSessionId = join(dirname(uuidDir), `${basename(uuidDir)}.jsonl`);
   }
@@ -180,6 +194,10 @@ export function finalizeMeta(
     model: state.model,
     isSubagent,
     parentSessionId,
+    subagentId: isSidechain ? state.agentId : undefined,
+    // A sidechain line's `sessionId` IS the parent's id — that is exactly the
+    // conflation `subagentId` exists to undo, so it is the parent UUID here.
+    parentSessionUuid: isSidechain && state.sessionId ? state.sessionId : undefined,
     isTeammate: state.isTeammate,
     teamName: state.teamName || null,
     toolNames: state.toolNames,
@@ -188,6 +206,11 @@ export function finalizeMeta(
     lastPrompt: state.lastPrompt || undefined,
   };
 }
+
+// Both separators: the scanner is handed NATIVE paths, so a hardcoded "/" makes
+// this test silently false on Windows — a clean false negative that disables
+// path-based subagent detection there without any error.
+const SUBAGENT_PATH_RE = /[\\/]subagents[\\/]/;
 
 // Fallback session name for interactive Claude Code conversations, which carry
 // no `slug` (only SDK/agent sessions do). The first user message is the only

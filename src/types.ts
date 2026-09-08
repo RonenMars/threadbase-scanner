@@ -64,7 +64,19 @@ export interface ConversationMeta {
   gitBranch: string | null;
   model: string | null;
   isSubagent: boolean;
+  // NOTE: despite the name, this holds the parent's JSONL FILE PATH, not an id
+  // — it is matched against `id` (also a file path) by the "tree" view. For the
+  // parent's actual session UUID use `parentSessionUuid` below.
   parentSessionId: string | null;
+  // The subagent's OWN identity, distinct from `sessionId`: a Claude sidechain
+  // transcript carries its PARENT's id in the `sessionId` field, so `sessionId`
+  // alone collapses every sibling subagent (and the parent) onto one identity.
+  // Claude's `agentId`; undefined for Codex, which exposes no per-child id.
+  subagentId?: string;
+  // The parent conversation's session UUID (Claude: the sidechain line's
+  // `sessionId`; Codex: `thread_spawn.parent_thread_id`). Undefined on ordinary
+  // conversations and on subagents whose parent is not discoverable.
+  parentSessionUuid?: string;
   isTeammate: boolean;
   teamName: string | null;
   toolNames: string[];
