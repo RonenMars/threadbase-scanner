@@ -18,7 +18,9 @@
 // otherwise every DB already at v3 skips the migration and never gets the table.
 // v5: FTS body split from one `content` column into text/thinking/tools, fed by
 // the tail-biased search document instead of meta.contentSnippet.
-export const SCHEMA_VERSION = 5;
+// v6: subagent_id + parent_session_uuid — a subagent transcript's own identity,
+// which sessionId cannot carry (it holds the PARENT's id on a sidechain).
+export const SCHEMA_VERSION = 6;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -94,7 +96,11 @@ CREATE TABLE IF NOT EXISTS conversations (
 
   model TEXT,
   is_subagent INTEGER NOT NULL DEFAULT 0,
+  -- The parent's JSONL PATH (matched against source_path), not an id.
   parent_session_id TEXT,
+  -- The subagent's own id (Claude agentId), and the parent's session UUID.
+  subagent_id TEXT,
+  parent_session_uuid TEXT,
   is_teammate INTEGER NOT NULL DEFAULT 0,
   team_name TEXT,
   tool_names_json TEXT,

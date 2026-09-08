@@ -1,0 +1,3 @@
+{"timestamp":"2026-08-01T10:00:00.000Z","type":"session_meta","payload":{"id":"01a050c1-e90d-78a3-b5da-9eb903702f46","timestamp":"2026-08-01T10:00:00.000Z","cwd":"/Users/dev/projects/widget","model_provider":"openai","source":{"subagent":{"thread_spawn":{"parent_thread_id":"019fc6f6-95f5-75d1-9e86-97e12c7bbff6"}}}}}
+{"timestamp":"2026-08-01T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the migration runner"}]}}
+{"timestamp":"2026-08-01T10:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The runner is gated by user_version."}]}}

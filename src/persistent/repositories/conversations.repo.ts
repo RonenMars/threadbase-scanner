@@ -29,6 +29,8 @@ export interface ConversationRow {
   model: string | null;
   is_subagent: number;
   parent_session_id: string | null;
+  subagent_id: string | null;
+  parent_session_uuid: string | null;
   is_teammate: number;
   team_name: string | null;
   tool_names_json: string | null;
@@ -59,6 +61,8 @@ export function rowToMeta(row: ConversationRow): ConversationMeta {
     model: row.model,
     isSubagent: row.is_subagent === 1,
     parentSessionId: row.parent_session_id,
+    subagentId: row.subagent_id ?? undefined,
+    parentSessionUuid: row.parent_session_uuid ?? undefined,
     isTeammate: row.is_teammate === 1,
     teamName: row.team_name,
     toolNames: row.tool_names_json ? (JSON.parse(row.tool_names_json) as string[]) : [],
@@ -86,7 +90,8 @@ export class ConversationsRepo {
            account, branch, preview, content_snippet, message_count, page_message_count,
            last_message_sender,
            timestamp, index_seq, first_sent_at, first_sent_text, last_sent_at, last_sent_text,
-           model, is_subagent, parent_session_id, is_teammate, team_name, tool_names_json,
+           model, is_subagent, parent_session_id, subagent_id, parent_session_uuid,
+           is_teammate, team_name, tool_names_json,
            last_prompt, status, updated_at
          ) VALUES (
            @file_id, @source_path, @provider, @kind, @external_session_id,
@@ -96,7 +101,8 @@ export class ConversationsRepo {
            @timestamp,
            (SELECT COALESCE(MAX(index_seq), 0) + 1 FROM conversations),
            @first_sent_at, @first_sent_text, @last_sent_at, @last_sent_text,
-           @model, @is_subagent, @parent_session_id, @is_teammate, @team_name, @tool_names_json,
+           @model, @is_subagent, @parent_session_id, @subagent_id, @parent_session_uuid,
+           @is_teammate, @team_name, @tool_names_json,
            @last_prompt, 'active', CURRENT_TIMESTAMP
          )
          ON CONFLICT(file_id) DO UPDATE SET
@@ -123,6 +129,8 @@ export class ConversationsRepo {
            model = excluded.model,
            is_subagent = excluded.is_subagent,
            parent_session_id = excluded.parent_session_id,
+           subagent_id = excluded.subagent_id,
+           parent_session_uuid = excluded.parent_session_uuid,
            is_teammate = excluded.is_teammate,
            team_name = excluded.team_name,
            tool_names_json = excluded.tool_names_json,
@@ -159,6 +167,8 @@ export class ConversationsRepo {
         model: meta.model,
         is_subagent: meta.isSubagent ? 1 : 0,
         parent_session_id: meta.parentSessionId,
+        subagent_id: meta.subagentId ?? null,
+        parent_session_uuid: meta.parentSessionUuid ?? null,
         is_teammate: meta.isTeammate ? 1 : 0,
         team_name: meta.teamName,
         tool_names_json: JSON.stringify(meta.toolNames),

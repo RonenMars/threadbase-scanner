@@ -74,6 +74,40 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v5 → v6: subagent identity columns. CREATE TABLE IF NOT EXISTS cannot add
+  // columns to the existing table, so ALTER first (before SCHEMA_SQL, matching
+  // the v1 → v2 block). Non-destructive: existing rows default to NULL.
+  //
+  // Then force a reindex, because these two fields are folded out of the JSONL
+  // — an already-indexed subagent would otherwise keep NULL forever, since
+  // nothing appends to a finished transcript and nothing would rebuild it.
+  // classify() returns "reindex" whenever last_indexed_offset === 0, so
+  // resetting the cursor is the whole trigger. No JSONL is read here: the
+  // re-parse happens in the next indexAll, not inside a pragma migration.
+  if (current >= 1 && current < 6 && tableExists(db, "conversations")) {
+    for (const [col, ddl] of [
+      ["subagent_id", "ALTER TABLE conversations ADD COLUMN subagent_id TEXT"],
+      ["parent_session_uuid", "ALTER TABLE conversations ADD COLUMN parent_session_uuid TEXT"],
+    ] as const) {
+      if (!hasColumn(db, "conversations", col)) db.exec(ddl);
+    }
+    if (tableExists(db, "conversation_files")) {
+      const assignments: string[] = [];
+      if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+        assignments.push("last_indexed_offset = 0");
+      }
+      if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+        assignments.push("last_indexed_line = 0");
+      }
+      if (hasColumn(db, "conversation_files", "reducer_state")) {
+        assignments.push("reducer_state = NULL");
+      }
+      if (assignments.length > 0) {
+        db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+      }
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);
