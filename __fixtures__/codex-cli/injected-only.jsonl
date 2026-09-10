@@ -1,0 +1,2 @@
+{"timestamp":"2026-09-09T10:00:00.000Z","type":"session_meta","payload":{"id":"inj-only","cwd":"/tmp/proj","source":"cli"}}
+{"timestamp":"2026-09-09T10:01:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/proj"}]}}

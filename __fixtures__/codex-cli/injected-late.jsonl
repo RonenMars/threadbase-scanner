@@ -1,0 +1,4 @@
+{"timestamp":"2026-09-09T10:00:00.000Z","type":"session_meta","payload":{"id":"inj-late","cwd":"/tmp/proj","source":"cli"}}
+{"timestamp":"2026-09-09T10:01:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"real opening turn"}]}}
+{"timestamp":"2026-09-09T10:02:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"here is our <INSTRUCTIONS> block, what do you think?"}]}}
+{"timestamp":"2026-09-09T10:03:00.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"input_text","text":"Looks fine."}]}}
