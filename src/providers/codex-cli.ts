@@ -5,6 +5,7 @@ import { basename } from "path";
 import { createInterface } from "readline";
 import { canonicalPath } from "../canonical-path";
 import { getLogger } from "../logger";
+import { deriveSessionNameFromFirstMessage } from "../persistent/metadata-reducer";
 import { cleanSystemTags } from "../tags";
 import type {
   ContentTier,
@@ -232,6 +233,16 @@ export function reduceCodexEntry(
   const text = extractCodexText(payload.content);
   if (!text) return;
 
+  // Codex prepends its AGENTS.md / sandbox preamble as the first `user` turn, so
+  // the role guard above cannot catch it: same category, wrong label. Counting it
+  // makes every conversation's preview and firstMessage that blob.
+  //
+  // Bounded to LEADING turns on purpose. A human pasting instruction text
+  // mid-conversation would otherwise go silently uncounted, and messageCount is a
+  // number people compare against what they can see. Codex only injects at the
+  // head, so the bound costs nothing real.
+  if (acc.messageCount === 0 && role === "user" && isCodexInjectedContext(text)) return;
+
   const sender = role as MessageSender;
   acc.messageCount++;
   acc.lastMessageSender = sender;
@@ -277,7 +288,10 @@ export function finalizeCodexMeta(
     kind,
     externalSessionId: acc.sessionId || undefined,
     sessionId,
-    sessionName: "",
+    // Mirrors the Claude reducer: a rollout carries no slug, so the opening turn
+    // is the only human-readable name source. Only useful because the injected
+    // AGENTS.md turn is skipped above — otherwise every title would be that blob.
+    sessionName: deriveSessionNameFromFirstMessage(acc.firstUser),
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,
@@ -299,6 +313,20 @@ export function finalizeCodexMeta(
     lastMessage: acc.lastAssistant ?? acc.lastUser,
     lastPrompt: acc.lastUser?.text || undefined,
   };
+}
+
+/**
+ * Boilerplate Codex injects as a `user`-role turn. Codex-generic only — prompts a
+ * host passes as argv (Codex has no --system-prompt flag) also land as role:user,
+ * but recognising those is the host's business, not the scanner's.
+ */
+export function isCodexInjectedContext(text: string): boolean {
+  // AGENTS.md / instruction dumps prepended as the opening turn.
+  if (text.startsWith("# AGENTS.md") || text.includes("<INSTRUCTIONS>")) return true;
+  // Permissions / sandbox preamble, sometimes a giant user-role blob.
+  return (
+    text.startsWith("<permissions instructions>") || text.includes("Filesystem sandboxing defines")
+  );
 }
 
 function getShortProjectName(fullPath: string): string {

@@ -108,6 +108,30 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v6 → v7: no schema change — a reindex only. Codex previews, titles and
+  // message counts previously included the AGENTS.md / sandbox preamble Codex
+  // prepends as the first `user` turn. All three are folded out of the JSONL
+  // into reducer_state, so an already-indexed rollout would keep its old
+  // "# AGENTS.md instructions for …" preview forever: nothing appends to a
+  // finished rollout, so nothing would rebuild the row. Resetting the cursor is
+  // the whole trigger (classify() returns "reindex" at offset 0); no JSONL is
+  // read here, the re-parse happens in the next indexAll.
+  if (current >= 1 && current < 7 && tableExists(db, "conversation_files")) {
+    const assignments: string[] = [];
+    if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+      assignments.push("last_indexed_offset = 0");
+    }
+    if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+      assignments.push("last_indexed_line = 0");
+    }
+    if (hasColumn(db, "conversation_files", "reducer_state")) {
+      assignments.push("reducer_state = NULL");
+    }
+    if (assignments.length > 0) {
+      db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);

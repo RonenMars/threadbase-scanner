@@ -20,7 +20,9 @@
 // the tail-biased search document instead of meta.contentSnippet.
 // v6: subagent_id + parent_session_uuid — a subagent transcript's own identity,
 // which sessionId cannot carry (it holds the PARENT's id on a sidechain).
-export const SCHEMA_VERSION = 6;
+// v7: reindex only — Codex previews/titles/counts no longer include the
+// AGENTS.md turn Codex prepends as the first `user` message.
+export const SCHEMA_VERSION = 7;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (

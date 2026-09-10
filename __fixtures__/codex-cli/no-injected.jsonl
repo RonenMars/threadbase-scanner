@@ -1,0 +1,3 @@
+{"timestamp":"2026-09-09T10:00:00.000Z","type":"session_meta","payload":{"id":"no-inj","cwd":"/tmp/proj","source":"cli"}}
+{"timestamp":"2026-09-09T10:01:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"just a normal opening question"}]}}
+{"timestamp":"2026-09-09T10:02:00.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"input_text","text":"An answer."}]}}

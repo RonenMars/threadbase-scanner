@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseMeta } from "../src/parser";
 import { finalizeMeta, initialReducerState } from "../src/persistent/metadata-reducer";
 import { runMigrations } from "../src/persistent/migrations";
+import { SCHEMA_VERSION } from "../src/persistent/schema";
 import { CodexCliProvider } from "../src/providers/codex-cli";
 import { parseMetaWithProvider } from "../src/providers/parse";
 import { ConversationScanner } from "../src/scanner";
@@ -236,7 +237,10 @@ describe("v5 → v6 migration on an existing database", () => {
 
     expect(columns()).toContain("subagent_id");
     expect(columns()).toContain("parent_session_uuid");
-    expect(db.pragma("user_version", { simple: true })).toBe(6);
+    // Against the constant, not a literal: the intent is "migrated to current",
+    // and a hardcoded number turns every future schema bump into a failure here
+    // that has nothing to do with subagent identity.
+    expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
   });
 
   it("preserves existing rows and resets the cursor so they reindex", () => {
