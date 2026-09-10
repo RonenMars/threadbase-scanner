@@ -141,12 +141,22 @@ const codexHits = await scanner.search('refactor', { provider: 'codex-cli' })
 (`'conversation'` | `'task'`) and `externalSessionId` (the Codex-native session
 id) when available.
 
-> **⚠️ In-memory only (for now).** Codex support runs through the legacy
-> in-memory scan path — the SQLite persistent engine indexes Threadbase/Claude
-> files only. Requesting `codex-cli` (via `providers` or `codexRoots`)
-> automatically routes that scan/search through the in-memory path, even on a
-> scanner constructed in persistent mode. Threadbase-only scans are unaffected
-> and still use SQLite. Persistent-mode Codex indexing is a planned follow-up.
+Codex rows are indexed into the same SQLite database as Claude history. Their
+`sessionId` is the rollout's `session_meta` id, which is the uuid at the end of
+the `rollout-<ts>-<uuid>.jsonl` filename.
+
+#### Resolving an id to its transcript file
+
+Don't rebuild a provider's directory layout to find a file. Ask the index. This
+works on a fresh scanner over an existing index, with no `scan()` in the current
+process:
+
+```typescript
+const scanner = new ConversationScanner() // opens the existing index.db
+const [meta] = scanner.getConversationsBySessionId(uuid) // newest first; [] if unknown
+meta?.filePath // absolute path to the .jsonl, for Claude and Codex alike
+const page = await scanner.getConversationPage(uuid, { limit: 50 })
+```
 
 ### Watching for changes (persistent mode)
 
