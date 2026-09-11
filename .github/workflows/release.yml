@@ -82,6 +82,14 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ secrets.STREAMER_DISPATCH_PAT }}
+          # Send the version we just published rather than letting the consumer
+          # re-derive it from `npm view`. The registry's read path is eventually
+          # consistent, so a consumer polling seconds after a publish can still
+          # be served the PREVIOUS version — which it then reports as
+          # "nothing to do". Harmless while releases stay inside the consumer's
+          # caret range; silently wrong the first time one does not.
+          NEXT_VERSION: ${{ needs.release-precheck.outputs.next_version }}
         run: |
           gh api -X POST repos/RonenMars/threadbase-streamer/dispatches \
-            -f event_type=scanner-released
+            -f event_type=scanner-released \
+            -f "client_payload[tag]=v${NEXT_VERSION}"

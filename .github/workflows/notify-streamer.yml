@@ -21,6 +21,11 @@ jobs:
       - name: Send repository_dispatch
         env:
           GH_TOKEN: ${{ secrets.STREAMER_DISPATCH_PAT }}
+          # This workflow fires ON the v* tag push, so the tag is already in
+          # hand; passing it avoids the consumer re-deriving the version from a
+          # registry that may not have caught up with the publish yet.
+          TAG: ${{ github.ref_name }}
         run: |
           gh api -X POST repos/RonenMars/threadbase-streamer/dispatches \
-            -f event_type=scanner-released
+            -f event_type=scanner-released \
+            -f "client_payload[tag]=${TAG}"
