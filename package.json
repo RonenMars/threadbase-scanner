@@ -48,7 +48,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "prepare": "npm run build",
     "dev": "tsup --watch",
     "test": "vitest run",
@@ -82,7 +82,7 @@
     "conventional-changelog-conventionalcommits": "^10.2.1",
     "semantic-release": "^25.0.5",
     "tsup": "^8.0.0",
-    "typescript": "^5.5.0",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }
 }
