@@ -19,6 +19,8 @@ Template: `src/providers/codex-cli.ts`. Format difficulty and agent table: [docs
 | Phone chips | [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) | [`.claude/skills/add-provider/SKILL.md`](https://github.com/RonenMars/threadbase-mobile/blob/HEAD/.claude/skills/add-provider/SKILL.md) |
 | History index | `threadbase-scanner` (this repo) | `.claude/skills/add-provider/` |
 
+**Keep companions in sync.** These three skills are one workflow. Changing this file (intake rules, wire-name convention, land order, companion links, or out-of-scope) means updating the other two in the same change set — PRs in `threadbase-streamer`, `threadbase-mobile`, and `threadbase-scanner`. Do not leave a companion on stale steps or a moved path.
+
 After merge and npm release, streamer raises `@threadbase-sh/scanner` in a **separate** PR. Until then live sessions can work with an empty history list.
 
 Worktrees are siblings: `git worktree add ../tb-scanner-worktrees/<slug> -b feat/<slug> origin/main`.

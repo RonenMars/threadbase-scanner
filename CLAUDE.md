@@ -31,7 +31,7 @@ Key modules and their responsibilities:
 
 ### Providers (`src/providers/`)
 
-Both the Claude/Threadbase format and local Codex CLI history flow through one normalized provider pipeline. Codex is **opt-in** via `scan({ providers: ['claude-code', 'codex-cli'], codexRoots: [...] })` — no home directory is scanned by default; `codexRoots` must be absolute.
+Both the Claude/Threadbase format and local Codex CLI history flow through one normalized provider pipeline. Codex is **opt-in** via `scan({ providers: ['claude-code', 'codex-cli'], codexRoots: [...] })` — no home directory is scanned by default; `codexRoots` must be absolute. Adding another agent: [`.claude/skills/add-provider/SKILL.md`](.claude/skills/add-provider/SKILL.md). That skill is paired with the same path in `threadbase-streamer` and `threadbase-mobile` — change all three together.
 
 **Codex is indexed in both the in-memory and SQLite persistent engines.** A persistent-mode scan/search with `providers: ['codex-cli']` + `codexRoots` discovers Codex files through the `CodexCliProvider`, reduces them via the shared provider pipeline, and upserts them into the same `conversations`/FTS tables as Threadbase. Threadbase files keep the byte-offset-resumable incremental fold; Codex files reparse from offset 0 on each change (rollout sessions are small — see the `ponytail:` note in `index-engine.ts` for the upgrade path). Persisted rows carry a `provider` column (schema v3); canonical identity is `(provider, absolute_path)` and `session_id` stays non-unique, resolved newest-timestamp-first.
 

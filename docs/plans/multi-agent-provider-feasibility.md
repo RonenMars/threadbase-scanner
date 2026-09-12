@@ -26,10 +26,10 @@ Key pieces to reuse for every new agent:
 
 - [`src/providers/provider.ts`](../../src/providers/provider.ts) — `ScannerProvider` (`discover` / `canParse` / `createEmptyAccumulator` / `reduceEntry` / `finalize`)
 - [`src/providers/codex-cli.ts`](../../src/providers/codex-cli.ts) — template for a non-Threadbase provider + `parseCodexConversation`
-
-Agent workflow for *this* repo: [`.claude/skills/add-provider/SKILL.md`](../../.claude/skills/add-provider/SKILL.md). Live PTY is `threadbase-streamer` `.claude/skills/add-provider/`; phone chips are `threadbase-mobile` `.claude/skills/add-provider/`.
 - [`src/providers/parse.ts`](../../src/providers/parse.ts) — shared stream fold
 - Persistent dispatch in [`src/persistent/index-engine.ts`](../../src/persistent/index-engine.ts) — non-`claude-code` providers take the full-reparse `indexFileWithProvider` path (schema `provider` column, FTS, `(provider, path)` identity)
+
+Agent workflow for *this* repo: [`.claude/skills/add-provider/SKILL.md`](../../.claude/skills/add-provider/SKILL.md). Live PTY is `threadbase-streamer` `.claude/skills/add-provider/`; phone chips are `threadbase-mobile` `.claude/skills/add-provider/`. Changing any of those three skills means updating the other two in the same change set.
 
 Wiring every new provider touches the same call sites Codex already touched: `ProviderName` unions, `discoverWithProviders`, `indexAll`, `resolveProviderForFile`, `getConversation` / `getPage`, fixtures under `__fixtures__/<provider>/`, and mirrored in-memory + persistent tests.
 
