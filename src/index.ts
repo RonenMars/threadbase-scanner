@@ -30,14 +30,23 @@ export {
   parseCodexJsonlLine,
 } from "./providers/codex-cli";
 export {
-  CursorCliProvider,
+  CursorProvider,
   parseCursorJsonlLine,
   unwrapCursorUserText,
-} from "./providers/cursor-cli";
+} from "./providers/cursor";
 export type {
   DiscoveredConversationFile,
   ScannerProvider,
   ScannerProviderName,
+} from "./providers/provider";
+export {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  canonicalizeProviderList,
+  canonicalizeProviderName,
+  LEGACY_CURSOR_PROVIDER,
+  providerMatches,
 } from "./providers/provider";
 export { ThreadbaseProvider } from "./providers/threadbase";
 export type {

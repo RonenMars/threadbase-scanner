@@ -127,18 +127,18 @@ import { join } from 'node:path'
 const scanner = new ConversationScanner()
 
 const result = await scanner.scan({
-  providers: ['claude-code', 'codex-cli', 'cursor-cli'],
+  providers: ['claude-code', 'codex-cli', 'cursor'],
   codexRoots: [join(homedir(), '.codex/sessions')],
   cursorRoots: [join(homedir(), '.cursor/projects')],
 })
 
 // Each meta carries its source provider
 for (const c of result.conversations) {
-  console.log(c.provider) // 'claude-code' | 'codex-cli' | 'cursor-cli'
+  console.log(c.provider) // 'claude-code' | 'codex-cli' | 'cursor'
 }
 
 // Search across all, or filter to one provider
-const cursorHits = await scanner.search('refactor', { provider: 'cursor-cli' })
+const cursorHits = await scanner.search('refactor', { provider: 'cursor' })
 ```
 
 `codexRoots` / `cursorRoots` entries must be absolute paths — expand `~` before
@@ -149,8 +149,8 @@ when available.
 Codex and Cursor rows are indexed into the same SQLite database as Claude
 history. A Codex `sessionId` is the rollout's `session_meta` id (the uuid at
 the end of `rollout-<ts>-<uuid>.jsonl`). A Cursor `sessionId` is the transcript
-filename stem (`<runId>.jsonl`). The wire name is **`cursor-cli`**, matching
-streamer and mobile — not `cursor-agent`. Cursor copies of another provider
+filename stem (`<runId>.jsonl`). The wire name is **`cursor`**. The live PTY
+name `cursor-cli` is still accepted as an alias. Not `cursor-agent`. Cursor copies of another provider
 set `isImportedFromClaude` or `isImportedFromCodex`; `isImportedFromCursor` is
 reserved for Claude/Codex providers.
 
@@ -349,7 +349,7 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `isTeammate` | boolean | VS Code |
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
-| `provider` | `'claude-code' \| 'codex-cli' \| 'cursor-cli'` | Provider that produced the meta |
+| `provider` | `'claude-code' \| 'codex-cli' \| 'cursor'` | Provider that produced the meta |
 | `kind` | `'conversation' \| 'task'` | Codex / Cursor (optional) |
 | `externalSessionId` | string | Provider-native session id (optional) |
 | `isImportedFromClaude` | boolean | Cursor copy of a Claude session (optional; omit when false) |

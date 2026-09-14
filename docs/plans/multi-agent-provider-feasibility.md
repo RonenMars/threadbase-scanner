@@ -1,7 +1,7 @@
 # Multi-agent session history — feasibility
 
-**Status:** research / roadmap. Phase 1 `cursor-cli` (agent-transcripts) shipped in `src/providers/cursor-cli.ts`. Composer `state.vscdb` remains Phase 3.
-**Date:** 2026-07-24 (cursor-cli implementation 2026-09-14)
+**Status:** research / roadmap. Phase 1 `cursor` (agent-transcripts) shipped in `src/providers/cursor.ts`. Composer `state.vscdb` remains Phase 3.
+**Date:** 2026-07-24 (cursor implementation 2026-09-14)
 **Question:** Can `@threadbase-sh/scanner` scan (and “serve”) session history from Cursor, Amp, Antigravity, Copilot, OpenCode, Gemini, Grok, and similar agents?
 
 ## Short answer
@@ -21,13 +21,13 @@ Today the scanner indexes three local formats through one normalized model:
 
 - **`claude-code`** (default) — `~/.claude/projects/**/*.jsonl`, byte-offset incremental fold into SQLite
 - **`codex-cli`** (opt-in) — absolute `codexRoots`, full reparse on change (sessions are small)
-- **`cursor-cli`** (opt-in) — absolute `cursorRoots` (typically `~/.cursor/projects`), `**/agent-transcripts/**/*.jsonl`, full reparse. Wire name matches streamer/mobile; **not** `cursor-agent`. Composer chat is out of scope.
+- **`cursor`** (opt-in) — absolute `cursorRoots` (typically `~/.cursor/projects`), `**/agent-transcripts/**/*.jsonl`, full reparse. Wire name matches streamer/mobile (`cursor-cli` is a legacy alias); **not** `cursor-agent`. Composer chat is out of scope.
 
 Key pieces to reuse for every new agent:
 
 - [`src/providers/provider.ts`](../../src/providers/provider.ts) — `ScannerProvider` (`discover` / `canParse` / `createEmptyAccumulator` / `reduceEntry` / `finalize`)
 - [`src/providers/codex-cli.ts`](../../src/providers/codex-cli.ts) — template for a non-Threadbase provider + `parseCodexConversation`
-- [`src/providers/cursor-cli.ts`](../../src/providers/cursor-cli.ts) — Cursor agent-transcripts (`cursor-cli`) + `parseCursorConversation`
+- [`src/providers/cursor.ts`](../../src/providers/cursor.ts) — Cursor agent-transcripts (`cursor`) + `parseCursorConversation`
 - [`src/providers/parse.ts`](../../src/providers/parse.ts) — shared stream fold
 - Persistent dispatch in [`src/persistent/index-engine.ts`](../../src/persistent/index-engine.ts) — non-`claude-code` providers take the full-reparse `indexFileWithProvider` path (schema `provider` column, FTS, `(provider, path)` identity)
 
@@ -64,7 +64,7 @@ Difficulty scale for a Codex-shaped provider (discover + meta fold + full parse 
 | **Grok CLI** | `~/.grok/sessions/<cwd-encoded>/<sessionId>/` | Dir per session: `summary.json` + `updates.jsonl` / `chat_history.jsonl` | Yes | Easy–Medium | Authoritative transcript is `updates.jsonl` (ACP stream). `GROK_HOME` override. Discovery is directory-based, not single-file — map one session dir → one `ConversationMeta` (`id` = canonical session path). |
 | **Amp** | `~/.local/share/amp/threads/T-{uuid}.json` | Whole-file JSON rewrite (`messages[]`, usage ledger) | Yes | Easy | No append-only Δ; always full reparse (same as Codex path). Prefer threads over `history.jsonl` (prompts only). |
 | **Copilot CLI** | `~/.copilot/session-state/<id>/events.jsonl` + `session-store.db` | JSONL events (+ Chronicle SQLite index) | Yes | Medium | Prefer `events.jsonl` for full transcript; Chronicle is a subset for listing. `COPILOT_HOME` override. |
-| **Cursor Agent transcripts** | `~/.cursor/projects/<slug>/agent-transcripts/<runId>/<runId>.jsonl` | JSONL | Yes | Easy–Medium | Wire name **`cursor-cli`** (not `cursor-agent`). Distinct from Composer chat. Implemented in `src/providers/cursor-cli.ts`. |
+| **Cursor Agent transcripts** | `~/.cursor/projects/<slug>/agent-transcripts/<runId>/<runId>.jsonl` | JSONL | Yes | Easy–Medium | Wire name **`cursor`** (not `cursor-agent`; `cursor-cli` is a legacy alias). Distinct from Composer chat. Implemented in `src/providers/cursor.ts`. |
 | **Cursor Composer** | `Cursor/User/globalStorage/state.vscdb` (+ workspace DBs) | SQLite `cursorDiskKV` / `ItemTable` (`composerData:…`, `bubbleId:…`) | Yes | Hard | Schema drift (≤2.6 per-workspace `allComposers` vs 3.0+ central `composer.composerHeaders`). Read-only; copy DB if locked. Not a natural fit for JSONL providers — needs a SQLite-backed provider variant. |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` (+ legacy `storage/session|message|part`) | SQLite `session` / `message` / `part`; legacy JSON tree | Yes | Medium | Prefer SQLite when present; drop legacy to avoid double-count. macOS: `~/Library/Application Support/opencode/`. |
 | **Copilot (VS Code Chat)** | `Code/User/workspaceStorage/<hash>/chatSessions/*.json` | Per-workspace JSON sessions | Yes | Medium | Must resolve workspace hash → folder via `workspace.json`. Separate from Copilot CLI. |
@@ -123,7 +123,7 @@ Default new providers to **full reparse on change** (Codex path) unless the form
 Ship one provider at a time, Codex template, persistent + in-memory tests:
 
 1. **Gemini CLI** (`gemini-cli`)
-2. **Cursor agent-transcripts** (`cursor-cli`) — not Composer. Shipped: `src/providers/cursor-cli.ts`. Wire name matches streamer/mobile.
+2. **Cursor agent-transcripts** (`cursor`) — not Composer. Shipped: `src/providers/cursor.ts`. Wire name matches streamer/mobile (`cursor-cli` alias).
 3. **Grok CLI** (`grok-cli`) — session-dir discovery
 4. **Amp** (`amp`)
 5. **Copilot CLI** (`copilot-cli`) — `events.jsonl`

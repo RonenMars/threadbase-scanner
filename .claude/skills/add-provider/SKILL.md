@@ -1,13 +1,13 @@
 ---
 name: add-provider
-description: Add a new agent CLI to @threadbase-sh/scanner (ScannerProvider, opt-in roots, fixtures, persistent index). Use when adding Cursor, Codex, Gemini, Amp, Aider, OpenCode, Goose, ClawCode, Hermes, cursor-cli, history indexing, ScannerProvider, or when the user says add a provider. Live PTY and phone chips are other repos — see Companions.
+description: Add a new agent CLI to @threadbase-sh/scanner (ScannerProvider, opt-in roots, fixtures, persistent index). Use when adding Cursor, Codex, Gemini, Amp, Aider, OpenCode, Goose, ClawCode, Hermes, cursor, history indexing, ScannerProvider, or when the user says add a provider. Live PTY and phone chips are other repos — see Companions.
 ---
 
 # Add a provider (scanner)
 
 This package is the **history index** half. It has no HTTP. The streamer hosts `@threadbase-sh/scanner`. Indexing a name here does not start sessions or draw a browse chip.
 
-Canonical wire name: kebab, matching streamer/mobile (`cursor-cli`, `gemini-cli`, `opencode`, `goose`, `aider`).
+Canonical wire name: kebab, matching streamer/mobile (`cursor`, `gemini-cli`, `opencode`, `goose`, `aider`). The live-PTY alias `cursor-cli` is accepted and stored as `cursor`.
 
 Template: `src/providers/codex-cli.ts`. Format difficulty and agent table: [docs/plans/multi-agent-provider-feasibility.md](../../../docs/plans/multi-agent-provider-feasibility.md). **Read that matrix before choosing a parse strategy.**
 
@@ -76,7 +76,7 @@ Streamer: bump `@threadbase-sh/scanner`, pass `providers` + `*Roots` from `Scann
 
 README must list the new opt-in roots.
 
-Worked example: `cursor-cli` — `src/providers/cursor-cli.ts`, `cursorRoots`, fixtures under `__fixtures__/cursor-cli/`. Wire name matches streamer/mobile; Composer `state.vscdb` is out of scope. Cursor copies of Claude/Codex set `isImportedFromClaude` / `isImportedFromCodex` (schema v8); `isImportedFromCursor` is reserved for the other providers.
+Worked example: `cursor` — `src/providers/cursor.ts`, `cursorRoots`, fixtures under `__fixtures__/cursor/`. Wire name matches streamer/mobile (`cursor-cli` is a legacy alias). Composer `state.vscdb` is out of scope. Cursor copies of Claude/Codex set `isImportedFromClaude` / `isImportedFromCodex` (schema v8); `isImportedFromCursor` is reserved for the other providers.
 
 ## Out of scope
 

@@ -16,11 +16,7 @@ import type {
   MessageSnapshot,
 } from "../types";
 import { parseCodexJsonlLine } from "./codex-cli";
-import {
-  CURSOR_CLI_PROVIDER,
-  type DiscoveredConversationFile,
-  type ScannerProvider,
-} from "./provider";
+import { CURSOR_PROVIDER, type DiscoveredConversationFile, type ScannerProvider } from "./provider";
 
 // Cursor agent-transcripts JSONL: `{ role, message: { content: [{ type, text }] } }`.
 // No envelope `type` of user/assistant (that's Claude), no session_meta (that's
@@ -49,8 +45,8 @@ const TIMESTAMP_RE = /<timestamp>\s*([\s\S]*?)\s*<\/timestamp>/;
 const USER_QUERY_RE = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/;
 const SUBAGENT_PATH_RE = /[\\/]subagents[\\/]/;
 
-export class CursorCliProvider implements ScannerProvider<CursorAccumulator> {
-  readonly name = CURSOR_CLI_PROVIDER;
+export class CursorProvider implements ScannerProvider<CursorAccumulator> {
+  readonly name = CURSOR_PROVIDER;
 
   async discover(roots: string[]): Promise<DiscoveredConversationFile[]> {
     const log = getLogger();
@@ -384,7 +380,7 @@ export function finalizeCursorMeta(
   return {
     id: filePath,
     filePath,
-    provider: CURSOR_CLI_PROVIDER,
+    provider: CURSOR_PROVIDER,
     kind,
     externalSessionId: sessionId,
     sessionId,

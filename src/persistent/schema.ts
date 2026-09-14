@@ -23,7 +23,8 @@
 // v7: reindex only — Codex previews/titles/counts no longer include the
 // AGENTS.md turn Codex prepends as the first `user` message.
 // v8: import-provenance flags on conversations (is_imported_from_*).
-export const SCHEMA_VERSION = 8;
+// v9: rename stored provider `cursor-cli` → `cursor`.
+export const SCHEMA_VERSION = 9;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (

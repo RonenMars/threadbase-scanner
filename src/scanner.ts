@@ -27,12 +27,14 @@ import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
-import { CursorCliProvider, parseCursorConversation } from "./providers/cursor-cli";
+import { CursorProvider, parseCursorConversation } from "./providers/cursor";
 import { parseMetaWithProvider } from "./providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  canonicalizeProviderList,
+  providerMatches,
   type ScannerProvider,
 } from "./providers/provider";
 import { ThreadbaseProvider } from "./providers/threadbase";
@@ -525,9 +527,7 @@ export class ConversationScanner {
       results = results.filter((r) => r.meta.account === options.account);
     }
     if (options.provider) {
-      results = results.filter(
-        (r) => (r.meta.provider ?? CLAUDE_CODE_PROVIDER) === options.provider,
-      );
+      results = results.filter((r) => providerMatches(r.meta.provider, options.provider as string));
     }
     if (options.since) {
       const cutoff = parseSinceCutoff(options.since);
@@ -574,7 +574,7 @@ export class ConversationScanner {
       if (
         this.persistent &&
         meta.provider !== CODEX_CLI_PROVIDER &&
-        meta.provider !== CURSOR_CLI_PROVIDER
+        meta.provider !== CURSOR_PROVIDER
       ) {
         const parsed = await parseConversationResumable(meta.filePath, meta.account);
         if (parsed) this.conversationLRU.set(cid, parsed);
@@ -583,7 +583,7 @@ export class ConversationScanner {
       const conversation =
         meta.provider === CODEX_CLI_PROVIDER
           ? await parseCodexConversation(meta.filePath, meta.account)
-          : meta.provider === CURSOR_CLI_PROVIDER
+          : meta.provider === CURSOR_PROVIDER
             ? await parseCursorConversation(meta.filePath, meta.account)
             : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
@@ -659,7 +659,7 @@ export class ConversationScanner {
     const conversation =
       provider?.name === CODEX_CLI_PROVIDER
         ? await parseCodexConversation(filePath, account ?? "default")
-        : provider?.name === CURSOR_CLI_PROVIDER
+        : provider?.name === CURSOR_PROVIDER
           ? await parseCursorConversation(filePath, account ?? "default")
           : await parseConversation(filePath, account ?? "default");
     if (!conversation) return null;
@@ -1040,7 +1040,7 @@ export class ConversationScanner {
     activeProfiles: Profile[],
     options: ScanOptions,
   ): Promise<{ filePath: string; account: string; provider: ScannerProvider }[]> {
-    const enabled = options.providers ?? [CLAUDE_CODE_PROVIDER];
+    const enabled = canonicalizeProviderList(options.providers);
     const work: { filePath: string; account: string; provider: ScannerProvider }[] = [];
 
     if (enabled.includes(CLAUDE_CODE_PROVIDER)) {
@@ -1056,8 +1056,8 @@ export class ConversationScanner {
         work.push({ ...f, provider });
       }
     }
-    if (enabled.includes(CURSOR_CLI_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
-      const provider = new CursorCliProvider();
+    if (enabled.includes(CURSOR_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
+      const provider = new CursorProvider();
       for (const f of await provider.discover(options.cursorRoots as string[])) {
         work.push({ ...f, provider });
       }
@@ -1074,7 +1074,9 @@ export class ConversationScanner {
     previous: ConversationMeta | null,
   ): Promise<ScannerProvider | undefined> {
     if (previous?.provider === CODEX_CLI_PROVIDER) return new CodexCliProvider();
-    if (previous?.provider === CURSOR_CLI_PROVIDER) return new CursorCliProvider();
+    if (providerMatches(previous?.provider, CURSOR_PROVIDER)) {
+      return new CursorProvider();
+    }
     if (previous?.provider) return undefined; // known Threadbase
     let sample = "";
     try {
@@ -1089,7 +1091,7 @@ export class ConversationScanner {
     } catch {
       return undefined;
     }
-    const cursor = new CursorCliProvider();
+    const cursor = new CursorProvider();
     if (cursor.canParse(filePath, sample)) return cursor;
     const codex = new CodexCliProvider();
     if (codex.canParse(filePath, sample)) return codex;

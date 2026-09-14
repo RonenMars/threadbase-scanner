@@ -6,7 +6,7 @@ import { openDatabase } from "../src/persistent/db";
 import { ConversationScanner } from "../src/scanner";
 import type { ConversationMeta } from "../src/types";
 
-const FIXTURES = join(__dirname, "..", "__fixtures__", "cursor-cli");
+const FIXTURES = join(__dirname, "..", "__fixtures__", "cursor");
 
 function plant(
   root: string,
@@ -43,36 +43,36 @@ describe("persistent SQLite Cursor indexing", () => {
     const scanner = newScanner();
     const result = await scanner.scan({
       profiles: [],
-      providers: ["cursor-cli"],
+      providers: ["cursor"],
       cursorRoots: [cursorRoot],
     });
     const convos = result.conversations as ConversationMeta[];
     expect(convos).toHaveLength(2);
-    expect(convos.every((c) => c.provider === "cursor-cli")).toBe(true);
+    expect(convos.every((c) => c.provider === "cursor")).toBe(true);
     scanner.close();
   });
 
   it("does not index Cursor unless cursorRoots given", async () => {
     const scanner = newScanner();
-    const result = await scanner.scan({ profiles: [], providers: ["cursor-cli"] });
+    const result = await scanner.scan({ profiles: [], providers: ["cursor"] });
     expect((result.conversations as ConversationMeta[]).length).toBe(0);
     scanner.close();
   });
 
   it("stores Cursor rows in SQLite with provider/preview/count", async () => {
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
     scanner.close();
 
     const db = openDatabase(dbPath);
     const rows = db
-      .prepare("SELECT * FROM conversations WHERE provider = 'cursor-cli' AND status = 'active'")
+      .prepare("SELECT * FROM conversations WHERE provider = 'cursor' AND status = 'active'")
       .all() as Record<string, unknown>[];
     expect(rows).toHaveLength(2);
 
     const tools = rows.find((r) => r.session_id === "sess-tools-0002");
     expect(tools).toBeTruthy();
-    expect(tools?.provider).toBe("cursor-cli");
+    expect(tools?.provider).toBe("cursor");
     expect((tools?.message_count as number) > 0).toBe(true);
     expect(String(tools?.preview ?? "").length).toBeGreaterThan(0);
     db.close();
@@ -80,7 +80,7 @@ describe("persistent SQLite Cursor indexing", () => {
 
   it("getConversation resolves a Cursor file by path and by sessionId", async () => {
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
 
     const byPath = await scanner.getConversation(
       join(
@@ -114,7 +114,7 @@ describe("persistent SQLite Cursor indexing", () => {
       "Users-dev-beta",
     );
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
 
     const all = scanner.getConversationsBySessionId("shared-id-9999");
     expect(all).toHaveLength(2);
@@ -138,7 +138,7 @@ describe("persistent SQLite Cursor indexing", () => {
     );
 
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
     expect(scanner.getConversationsBySessionId("shared-id-9999")).toHaveLength(2);
 
     rmSync(newer);
@@ -152,7 +152,7 @@ describe("persistent SQLite Cursor indexing", () => {
 
   it("refreshing a Cursor file updates its SQLite row", async () => {
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
     const path = join(
       cursorRoot,
       "Users-dev-widget",
@@ -163,18 +163,18 @@ describe("persistent SQLite Cursor indexing", () => {
 
     const meta = await scanner.refreshFile(path);
     expect(meta).not.toBeNull();
-    expect(meta?.provider).toBe("cursor-cli");
+    expect(meta?.provider).toBe("cursor");
     expect(meta?.toolNames).toContain("Grep");
     scanner.close();
   });
 
   it("persistent search finds Cursor text and filters by provider", async () => {
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
 
-    const hits = await scanner.search("Python", { provider: "cursor-cli" });
+    const hits = await scanner.search("Python", { provider: "cursor" });
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0].meta.provider).toBe("cursor-cli");
+    expect(hits[0].meta.provider).toBe("cursor");
 
     const none = await scanner.search("Python", { provider: "claude-code" });
     expect(none.length).toBe(0);
@@ -183,7 +183,7 @@ describe("persistent SQLite Cursor indexing", () => {
 
   it("getConversationPage returns Cursor messages equal to getConversation().messages", async () => {
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
     const path = join(
       cursorRoot,
       "Users-dev-widget",
@@ -214,13 +214,13 @@ describe("persistent SQLite Cursor indexing", () => {
     plant(cursorRoot, "sess-imported-field", "imported-from-claude-field.jsonl");
 
     const scanner = newScanner();
-    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [cursorRoot] });
     scanner.close();
 
     const db = openDatabase(dbPath);
     const rows = db
       .prepare(
-        "SELECT session_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor FROM conversations WHERE provider = 'cursor-cli'",
+        "SELECT session_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor FROM conversations WHERE provider = 'cursor'",
       )
       .all() as Array<{
       session_id: string;

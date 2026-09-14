@@ -166,10 +166,15 @@ export function runMigrations(db: Database): void {
       if (assignments.length > 0) {
         db.exec(
           `UPDATE conversation_files SET ${assignments.join(", ")}
-           WHERE id IN (SELECT file_id FROM conversations WHERE provider = 'cursor-cli')`,
+           WHERE id IN (SELECT file_id FROM conversations WHERE provider IN ('cursor', 'cursor-cli'))`,
         );
       }
     }
+  }
+
+  // v8 → v9: wire name `cursor-cli` → `cursor`. Live PTY shipped the old name.
+  if (current >= 1 && current < 9 && tableExists(db, "conversations")) {
+    db.exec(`UPDATE conversations SET provider = 'cursor' WHERE provider = 'cursor-cli'`);
   }
 
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates

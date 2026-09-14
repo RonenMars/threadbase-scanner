@@ -59,7 +59,7 @@ describe("v7 → v8 migration adds import-provenance columns", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("adds the three import columns and reindexes only cursor-cli files", () => {
+  it("adds import columns, reindexes cursor files, and rewrites cursor-cli to cursor", () => {
     runMigrations(db);
 
     const cols = (db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[]).map(
@@ -83,6 +83,11 @@ describe("v7 → v8 migration adds import-provenance columns", () => {
     >;
     expect(claude.last_indexed_offset).toBe(2048);
     expect(claude.last_indexed_line).toBe(8);
+
+    const renamed = db.prepare("SELECT provider FROM conversations WHERE file_id = 1").get() as {
+      provider: string;
+    };
+    expect(renamed.provider).toBe("cursor");
 
     expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
   });

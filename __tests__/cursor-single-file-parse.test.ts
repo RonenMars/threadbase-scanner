@@ -4,7 +4,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationScanner } from "../src/scanner";
 
-const FIXTURES = join(__dirname, "..", "__fixtures__", "cursor-cli");
+const FIXTURES = join(__dirname, "..", "__fixtures__", "cursor");
 
 function cursorTurn(text: string): string {
   return `${JSON.stringify({
@@ -75,20 +75,20 @@ describe("provider resolution on the Cursor single-file paths", () => {
 
   describe("refreshFile (non-persistent)", () => {
     it("keeps a Cursor transcript indexed instead of dropping it", async () => {
-      await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [dir] });
+      await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [dir] });
       expect((await scanner.getConversation("sess-basic-0001"))?.messages).toHaveLength(4);
 
       appendFileSync(cursorFile, cursorTurn("and to reverse a string?"));
       const meta = await scanner.refreshFile(cursorFile);
 
       expect(meta).not.toBeNull();
-      expect(meta?.provider).toBe("cursor-cli");
+      expect(meta?.provider).toBe("cursor");
       expect(meta?.messageCount).toBe(5);
       expect((await scanner.getConversation("sess-basic-0001"))?.messages).toHaveLength(5);
     });
 
     it("still drops a Cursor transcript that was deleted", async () => {
-      await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [dir] });
+      await scanner.scan({ profiles: [], providers: ["cursor"], cursorRoots: [dir] });
       expect(await scanner.getConversation("sess-basic-0001")).not.toBeNull();
 
       unlinkSync(cursorFile);

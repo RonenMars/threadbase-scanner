@@ -1,5 +1,5 @@
 import { extractThinking } from "./parser";
-import { looksLikeCursorChatEntry, unwrapCursorUserText } from "./providers/cursor-cli";
+import { looksLikeCursorChatEntry, unwrapCursorUserText } from "./providers/cursor";
 import { cleanSystemTags } from "./tags";
 
 // The derived search corpus: one document per conversation, split into three
