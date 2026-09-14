@@ -79,6 +79,49 @@ describe("CursorCliProvider parsing", () => {
     expect(new ThreadbaseProvider().canParse("x.jsonl", cursor)).toBe(false);
     expect(new CodexCliProvider().canParse("x.jsonl", cursor)).toBe(false);
   });
+
+  it("claims Claude and Codex envelopes only under agent-transcripts", () => {
+    const provider = new CursorCliProvider();
+    const claude = readFileSync(join(FIXTURES, "imported-from-claude.jsonl"), "utf8");
+    const codex = readFileSync(join(FIXTURES, "imported-from-codex.jsonl"), "utf8");
+    expect(provider.canParse("x.jsonl", claude)).toBe(false);
+    expect(provider.canParse("x.jsonl", codex)).toBe(false);
+    expect(provider.canParse("/tmp/agent-transcripts/sess.jsonl", claude)).toBe(true);
+    expect(provider.canParse("/tmp/agent-transcripts/sess.jsonl", codex)).toBe(true);
+  });
+
+  it("marks a Claude-envelope copy under agent-transcripts as imported from Claude", async () => {
+    const meta = await parse("imported-from-claude.jsonl");
+    expect(meta?.provider).toBe("cursor-cli");
+    expect(meta?.isImportedFromClaude).toBe(true);
+    expect(meta?.isImportedFromCodex).toBeUndefined();
+    expect(meta?.isImportedFromCursor).toBeUndefined();
+    expect(meta?.messageCount).toBe(2);
+    expect(meta?.firstMessage?.text).toBe("How did this Claude session get here?");
+  });
+
+  it("marks a Codex-envelope copy under agent-transcripts as imported from Codex", async () => {
+    const meta = await parse("imported-from-codex.jsonl");
+    expect(meta?.provider).toBe("cursor-cli");
+    expect(meta?.isImportedFromCodex).toBe(true);
+    expect(meta?.isImportedFromClaude).toBeUndefined();
+    expect(meta?.messageCount).toBe(2);
+    expect(meta?.firstMessage?.text).toBe("How did this Codex session get here?");
+  });
+
+  it("honours an importedFrom field on a Cursor-shaped line", async () => {
+    const meta = await parse("imported-from-claude-field.jsonl");
+    expect(meta?.isImportedFromClaude).toBe(true);
+    expect(meta?.isImportedFromCodex).toBeUndefined();
+    expect(meta?.messageCount).toBe(2);
+  });
+
+  it("leaves native Cursor sessions unmarked", async () => {
+    const meta = await parse("basic-session.jsonl");
+    expect(meta?.isImportedFromClaude).toBeUndefined();
+    expect(meta?.isImportedFromCodex).toBeUndefined();
+    expect(meta?.isImportedFromCursor).toBeUndefined();
+  });
 });
 
 describe("Scanner with Cursor provider", () => {

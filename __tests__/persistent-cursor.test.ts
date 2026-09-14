@@ -207,4 +207,43 @@ describe("persistent SQLite Cursor indexing", () => {
     expect(page?.messages).toEqual(all);
     scanner.close();
   });
+
+  it("persists import-provenance flags from Cursor transcripts", async () => {
+    plant(cursorRoot, "sess-imported-claude", "imported-from-claude.jsonl");
+    plant(cursorRoot, "sess-imported-codex", "imported-from-codex.jsonl");
+    plant(cursorRoot, "sess-imported-field", "imported-from-claude-field.jsonl");
+
+    const scanner = newScanner();
+    await scanner.scan({ profiles: [], providers: ["cursor-cli"], cursorRoots: [cursorRoot] });
+    scanner.close();
+
+    const db = openDatabase(dbPath);
+    const rows = db
+      .prepare(
+        "SELECT session_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor FROM conversations WHERE provider = 'cursor-cli'",
+      )
+      .all() as Array<{
+      session_id: string;
+      is_imported_from_claude: number;
+      is_imported_from_codex: number;
+      is_imported_from_cursor: number;
+    }>;
+
+    const native = rows.find((r) => r.session_id === "sess-basic-0001");
+    expect(native?.is_imported_from_claude).toBe(0);
+    expect(native?.is_imported_from_codex).toBe(0);
+    expect(native?.is_imported_from_cursor).toBe(0);
+
+    const claude = rows.find((r) => r.session_id === "sess-imported-claude");
+    expect(claude?.is_imported_from_claude).toBe(1);
+    expect(claude?.is_imported_from_codex).toBe(0);
+
+    const codex = rows.find((r) => r.session_id === "sess-imported-codex");
+    expect(codex?.is_imported_from_claude).toBe(0);
+    expect(codex?.is_imported_from_codex).toBe(1);
+
+    const field = rows.find((r) => r.session_id === "sess-imported-field");
+    expect(field?.is_imported_from_claude).toBe(1);
+    db.close();
+  });
 });

@@ -1,0 +1,2 @@
+{"role":"user","importedFrom":"claude-code","message":{"content":[{"type":"text","text":"<user_query>\nHow did this Claude session get here?\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"The importedFrom field marks a Cursor-shaped copy of a Claude chat."}]}}
