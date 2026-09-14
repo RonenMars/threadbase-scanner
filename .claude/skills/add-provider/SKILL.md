@@ -67,7 +67,7 @@ Today Codex and Cursor are hard-wired in `scanner.ts` / `index-engine.ts`. A new
 
 - finds from `*Roots`; nothing without roots
 - `meta.provider` is the new name
-- `canParse` does not steal Claude/Codex files
+- `canParse` does not steal Claude/Codex files (copies that land under this provider's tree are claimed there — Cursor `agent-transcripts` only)
 - search `provider` filter; deletion + refresh
 
 ## 4. Publish, then bump streamer
@@ -76,7 +76,7 @@ Streamer: bump `@threadbase-sh/scanner`, pass `providers` + `*Roots` from `Scann
 
 README must list the new opt-in roots.
 
-Worked example: `cursor-cli` — `src/providers/cursor-cli.ts`, `cursorRoots`, fixtures under `__fixtures__/cursor-cli/`. Wire name matches streamer/mobile; Composer `state.vscdb` is out of scope.
+Worked example: `cursor-cli` — `src/providers/cursor-cli.ts`, `cursorRoots`, fixtures under `__fixtures__/cursor-cli/`. Wire name matches streamer/mobile; Composer `state.vscdb` is out of scope. Cursor copies of Claude/Codex set `isImportedFromClaude` / `isImportedFromCodex` (schema v8); `isImportedFromCursor` is reserved for the other providers.
 
 ## Out of scope
 

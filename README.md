@@ -146,11 +146,13 @@ passing them (e.g. ``join(homedir(), '.cursor/projects')``). Codex and Cursor
 metas also set `kind` (`'conversation'` | `'task'`) and `externalSessionId`
 when available.
 
-Codex rows are indexed into the same SQLite database as Claude history. Their
-`sessionId` is the rollout's `session_meta` id, which is the uuid at the end of
-the `rollout-<ts>-<uuid>.jsonl` filename. Cursor `sessionId` is the transcript
+Codex and Cursor rows are indexed into the same SQLite database as Claude
+history. A Codex `sessionId` is the rollout's `session_meta` id (the uuid at
+the end of `rollout-<ts>-<uuid>.jsonl`). A Cursor `sessionId` is the transcript
 filename stem (`<runId>.jsonl`). The wire name is **`cursor-cli`**, matching
-streamer and mobile — not `cursor-agent`.
+streamer and mobile — not `cursor-agent`. Cursor copies of another provider
+set `isImportedFromClaude` or `isImportedFromCodex`; `isImportedFromCursor` is
+reserved for Claude/Codex providers.
 
 #### Resolving an id to its transcript file
 
@@ -161,7 +163,7 @@ process:
 ```typescript
 const scanner = new ConversationScanner() // opens the existing index.db
 const [meta] = scanner.getConversationsBySessionId(uuid) // newest first; [] if unknown
-meta?.filePath // absolute path to the .jsonl, for Claude and Codex alike
+meta?.filePath // absolute path to the .jsonl (Claude, Codex, and Cursor)
 const page = await scanner.getConversationPage(uuid, { limit: 50 })
 ```
 
@@ -348,8 +350,11 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
 | `provider` | `'claude-code' \| 'codex-cli' \| 'cursor-cli'` | Provider that produced the meta |
-| `kind` | `'conversation' \| 'task'` | Codex (optional) |
-| `externalSessionId` | string | Codex-native session id (optional) |
+| `kind` | `'conversation' \| 'task'` | Codex / Cursor (optional) |
+| `externalSessionId` | string | Provider-native session id (optional) |
+| `isImportedFromClaude` | boolean | Cursor copy of a Claude session (optional; omit when false) |
+| `isImportedFromCodex` | boolean | Cursor copy of a Codex session (optional; omit when false) |
+| `isImportedFromCursor` | boolean | Reserved for Claude/Codex copies of Cursor (optional; omit when false) |
 
 ## Development
 
