@@ -4,10 +4,12 @@ import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
 import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
+import { CursorCliProvider, parseCursorConversation } from "../providers/cursor-cli";
 import { parseMetaWithProvider } from "../providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
   type ScannerProvider,
 } from "../providers/provider";
 import { appendSearchDelta, emptySearchDocument, extractSearchDelta } from "../search-document";
@@ -122,6 +124,12 @@ export class PersistentEngine {
         discovered.push({ ...f, provider: codex });
       }
     }
+    const cursor = new CursorCliProvider();
+    if (enabled.includes(CURSOR_CLI_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
+      for (const f of await cursor.discover(options.cursorRoots as string[])) {
+        discovered.push({ ...f, provider: cursor });
+      }
+    }
     let scanned = 0;
 
     const gitBranchMemo = new Map<string, string | null>();
@@ -172,6 +180,9 @@ export class PersistentEngine {
     }
     if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
       coveredAccounts.add("codex");
+    }
+    if (enabled.includes(CURSOR_CLI_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
+      coveredAccounts.add("cursor");
     }
     // Canonical form on both sides: the stored paths are canonical, and a
     // discovery source that emits native separators would otherwise leave every
@@ -459,8 +470,11 @@ export class PersistentEngine {
     // sessions are small (already reparsed from offset 0 on every change), so
     // parse the whole conversation and slice the window — identical math to the
     // claude-code path and to the legacy getConversationPage slice.
-    if (meta.provider === CODEX_CLI_PROVIDER) {
-      const conversation = await parseCodexConversation(filePath, meta.account);
+    if (meta.provider === CODEX_CLI_PROVIDER || meta.provider === CURSOR_CLI_PROVIDER) {
+      const conversation =
+        meta.provider === CODEX_CLI_PROVIDER
+          ? await parseCodexConversation(filePath, meta.account)
+          : await parseCursorConversation(filePath, meta.account);
       if (!conversation) return null;
       const { messages } = conversation;
       const total = messages.length;

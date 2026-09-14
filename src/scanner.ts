@@ -27,10 +27,12 @@ import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
+import { CursorCliProvider, parseCursorConversation } from "./providers/cursor-cli";
 import { parseMetaWithProvider } from "./providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
   type ScannerProvider,
 } from "./providers/provider";
 import { ThreadbaseProvider } from "./providers/threadbase";
@@ -569,7 +571,11 @@ export class ConversationScanner {
       // extend it with only the appended bytes instead of evicting it. Codex
       // and legacy-mode parses stay on their existing parsers (no resume state;
       // a refresh evicts them as before).
-      if (this.persistent && meta.provider !== CODEX_CLI_PROVIDER) {
+      if (
+        this.persistent &&
+        meta.provider !== CODEX_CLI_PROVIDER &&
+        meta.provider !== CURSOR_CLI_PROVIDER
+      ) {
         const parsed = await parseConversationResumable(meta.filePath, meta.account);
         if (parsed) this.conversationLRU.set(cid, parsed);
         return parsed?.conversation ?? null;
@@ -577,7 +583,9 @@ export class ConversationScanner {
       const conversation =
         meta.provider === CODEX_CLI_PROVIDER
           ? await parseCodexConversation(meta.filePath, meta.account)
-          : await parseConversation(meta.filePath, meta.account);
+          : meta.provider === CURSOR_CLI_PROVIDER
+            ? await parseCursorConversation(meta.filePath, meta.account)
+            : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
         this.conversationLRU.set(cid, { conversation });
       }
@@ -651,7 +659,9 @@ export class ConversationScanner {
     const conversation =
       provider?.name === CODEX_CLI_PROVIDER
         ? await parseCodexConversation(filePath, account ?? "default")
-        : await parseConversation(filePath, account ?? "default");
+        : provider?.name === CURSOR_CLI_PROVIDER
+          ? await parseCursorConversation(filePath, account ?? "default")
+          : await parseConversation(filePath, account ?? "default");
     if (!conversation) return null;
 
     const { messages } = conversation;
@@ -1046,6 +1056,12 @@ export class ConversationScanner {
         work.push({ ...f, provider });
       }
     }
+    if (enabled.includes(CURSOR_CLI_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
+      const provider = new CursorCliProvider();
+      for (const f of await provider.discover(options.cursorRoots as string[])) {
+        work.push({ ...f, provider });
+      }
+    }
     return work;
   }
 
@@ -1058,6 +1074,7 @@ export class ConversationScanner {
     previous: ConversationMeta | null,
   ): Promise<ScannerProvider | undefined> {
     if (previous?.provider === CODEX_CLI_PROVIDER) return new CodexCliProvider();
+    if (previous?.provider === CURSOR_CLI_PROVIDER) return new CursorCliProvider();
     if (previous?.provider) return undefined; // known Threadbase
     let sample = "";
     try {
@@ -1072,6 +1089,8 @@ export class ConversationScanner {
     } catch {
       return undefined;
     }
+    const cursor = new CursorCliProvider();
+    if (cursor.canParse(filePath, sample)) return cursor;
     const codex = new CodexCliProvider();
     if (codex.canParse(filePath, sample)) return codex;
     return undefined;

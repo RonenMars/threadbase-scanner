@@ -52,7 +52,7 @@ Double-count traps (document the preference in the PR): Cursor agent-transcripts
 
 - `ScannerProviderName` + `ProviderName` + `ScanOptions.*Roots` (mirror `codexRoots`).
 
-Today Codex is hard-wired in `scanner.ts` / `index-engine.ts`. A new provider adds another gated `if` like Codex. Do not build a generic registry unless the user asked — but do not copy Claude's resumable fold into a SQLite agent.
+Today Codex and Cursor are hard-wired in `scanner.ts` / `index-engine.ts`. A new provider adds another gated `if` like those. Do not build a generic registry unless the user asked — but do not copy Claude's resumable fold into a SQLite agent.
 
 ## 2. Provider class
 
@@ -75,6 +75,8 @@ Today Codex is hard-wired in `scanner.ts` / `index-engine.ts`. A new provider ad
 Streamer: bump `@threadbase-sh/scanner`, pass `providers` + `*Roots` from `ScannerManager` (see [streamer skill](https://github.com/RonenMars/threadbase-streamer/blob/HEAD/.claude/skills/add-provider/SKILL.md)). Default a root only if the vendor path is stable and documented.
 
 README must list the new opt-in roots.
+
+Worked example: `cursor-cli` — `src/providers/cursor-cli.ts`, `cursorRoots`, fixtures under `__fixtures__/cursor-cli/`. Wire name matches streamer/mobile; Composer `state.vscdb` is out of scope.
 
 ## Out of scope
 

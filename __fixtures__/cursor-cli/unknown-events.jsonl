@@ -1,0 +1,6 @@
+{"type":"turn_ended","status":"success"}
+not even json at all {{{
+{"role":"tool","message":{"content":[{"type":"text","text":"tool noise"}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nDoes this still parse?\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Unknown events were ignored safely."}]}}
+{"type":"turn_ended","status":"error","error":"ignored"}

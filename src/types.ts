@@ -39,7 +39,7 @@ export interface MessageSnapshot {
   timestamp: string;
 }
 
-export type ProviderName = "claude-code" | "codex-cli";
+export type ProviderName = "claude-code" | "codex-cli" | "cursor-cli";
 
 export interface ConversationMeta {
   id: string;
@@ -83,6 +83,11 @@ export interface ConversationMeta {
   firstMessage: MessageSnapshot | null;
   lastMessage: MessageSnapshot | null;
   lastPrompt?: string;
+  // Set when a Cursor agent-transcripts file is a copy of another provider's
+  // session. isImportedFromCursor is reserved for Claude/Codex providers.
+  isImportedFromClaude?: boolean;
+  isImportedFromCodex?: boolean;
+  isImportedFromCursor?: boolean;
 }
 
 // ─── View Variants ──────────────────────────────────────────────────
@@ -105,10 +110,14 @@ export interface FileStatEntry {
 export interface ScanOptions {
   profiles?: Profile[];
   // Providers to scan. Defaults to ["claude-code"]. Including "codex-cli"
-  // requires codexRoots (no default home scan).
+  // requires codexRoots; including "cursor-cli" requires cursorRoots. Neither
+  // glob $HOME by default.
   providers?: ProviderName[];
   // Absolute roots to discover Codex CLI history under (e.g. ~/.codex/sessions).
   codexRoots?: string[];
+  // Absolute roots to discover Cursor agent-transcripts under
+  // (e.g. ~/.cursor/projects). Composer state.vscdb is out of scope.
+  cursorRoots?: string[];
   tier?: string;
   tiers?: Record<string, ContentTier>;
   include?: Include;

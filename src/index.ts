@@ -29,6 +29,11 @@ export {
   isCodexInjectedContext,
   parseCodexJsonlLine,
 } from "./providers/codex-cli";
+export {
+  CursorCliProvider,
+  parseCursorJsonlLine,
+  unwrapCursorUserText,
+} from "./providers/cursor-cli";
 export type {
   DiscoveredConversationFile,
   ScannerProvider,

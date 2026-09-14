@@ -83,6 +83,33 @@ describe("extractSearchDelta - Claude", () => {
   });
 });
 
+describe("extractSearchDelta - Cursor", () => {
+  it("unwraps user_query text and drops timestamp tags", () => {
+    const d = extractSearchDelta({
+      role: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text: "<timestamp>Monday, Jun 18, 2026, 5:22 PM (UTC+0)</timestamp>\n<user_query>\nCURSORNEEDLE\n</user_query>",
+          },
+        ],
+      },
+    });
+    expect(d.text).toBe("CURSORNEEDLE");
+    expect(d.text).not.toContain("timestamp");
+  });
+
+  it("routes tool_use input to tools", () => {
+    const d = extractSearchDelta({
+      role: "assistant",
+      message: { content: [{ type: "tool_use", name: "Grep", input: { pattern: "TOOLNEEDLE" } }] },
+    });
+    expect(d.tools).toContain("TOOLNEEDLE");
+    expect(d.text).toBe("");
+  });
+});
+
 describe("extractSearchDelta - Codex", () => {
   const codex = (payload: Record<string, unknown>) => ({ type: "response_item", payload });
 

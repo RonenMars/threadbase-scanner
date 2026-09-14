@@ -20,7 +20,7 @@ Combines the best parts of four independent scanner implementations (VS Code, El
 - **Filtering** — by project, account, time range, conversation type (conversations/subagents/teammates)
 - **5 sort modes** — recent, oldest, messages-desc, messages-asc, alphabetical
 - **Pagination** — limit/offset on all operations
-- **Multi-provider** — index Threadbase/Claude history and local OpenAI Codex CLI sessions through one normalized pipeline (Codex is opt-in; in-memory path only — see below)
+- **Multi-provider** — index Threadbase/Claude history, local OpenAI Codex CLI sessions, and Cursor agent-transcripts through one normalized pipeline (Codex and Cursor are opt-in)
 - **Multi-profile** — scan multiple Claude config directories
 - **LRU caching** — metadata and conversation caches for fast repeated access
 - **Git branch detection** — reads `.git/HEAD` with parent directory walking
@@ -113,37 +113,44 @@ scanner.close()
 
 ### Scanning Codex CLI history (providers)
 
-The scanner can index local **OpenAI Codex CLI** rollout sessions alongside the
-default Threadbase/Claude history, normalizing both into the same
-`ConversationMeta` model. Codex support is **opt-in**: pass `providers` and the
-explicit `codexRoots` to discover under (no home directory is scanned by
-default).
+The scanner can index local **OpenAI Codex CLI** rollout sessions and **Cursor**
+agent-transcripts (`~/.cursor/projects/<slug>/agent-transcripts/`) alongside the
+default Threadbase/Claude history, normalizing all of them into the same
+`ConversationMeta` model. Extra providers are **opt-in**: pass `providers` and
+the matching `*Roots` (no home directory is scanned by default). Cursor Composer
+(`state.vscdb`) is a different store and is not indexed.
 
 ```typescript
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 const scanner = new ConversationScanner()
 
 const result = await scanner.scan({
-  providers: ['claude-code', 'codex-cli'],
-  codexRoots: ['~/.codex/sessions'], // expand ~ yourself, or pass an absolute path
+  providers: ['claude-code', 'codex-cli', 'cursor-cli'],
+  codexRoots: [join(homedir(), '.codex/sessions')],
+  cursorRoots: [join(homedir(), '.cursor/projects')],
 })
 
 // Each meta carries its source provider
 for (const c of result.conversations) {
-  console.log(c.provider) // 'claude-code' | 'codex-cli'
+  console.log(c.provider) // 'claude-code' | 'codex-cli' | 'cursor-cli'
 }
 
-// Search across both, or filter to one provider
-const codexHits = await scanner.search('refactor', { provider: 'codex-cli' })
+// Search across all, or filter to one provider
+const cursorHits = await scanner.search('refactor', { provider: 'cursor-cli' })
 ```
 
-`codexRoots` entries must be absolute paths — expand `~` before passing them
-(e.g. ``join(homedir(), '.codex/sessions')``). Codex metas also set `kind`
-(`'conversation'` | `'task'`) and `externalSessionId` (the Codex-native session
-id) when available.
+`codexRoots` / `cursorRoots` entries must be absolute paths — expand `~` before
+passing them (e.g. ``join(homedir(), '.cursor/projects')``). Codex and Cursor
+metas also set `kind` (`'conversation'` | `'task'`) and `externalSessionId`
+when available.
 
 Codex rows are indexed into the same SQLite database as Claude history. Their
 `sessionId` is the rollout's `session_meta` id, which is the uuid at the end of
-the `rollout-<ts>-<uuid>.jsonl` filename.
+the `rollout-<ts>-<uuid>.jsonl` filename. Cursor `sessionId` is the transcript
+filename stem (`<runId>.jsonl`). The wire name is **`cursor-cli`**, matching
+streamer and mobile — not `cursor-agent`.
 
 #### Resolving an id to its transcript file
 
@@ -340,7 +347,7 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `isTeammate` | boolean | VS Code |
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
-| `provider` | `'claude-code' \| 'codex-cli'` | Provider that produced the meta |
+| `provider` | `'claude-code' \| 'codex-cli' \| 'cursor-cli'` | Provider that produced the meta |
 | `kind` | `'conversation' \| 'task'` | Codex (optional) |
 | `externalSessionId` | string | Codex-native session id (optional) |
 
