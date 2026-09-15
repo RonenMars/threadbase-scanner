@@ -35,6 +35,9 @@ export interface ConversationRow {
   team_name: string | null;
   tool_names_json: string | null;
   last_prompt: string | null;
+  is_imported_from_claude: number;
+  is_imported_from_codex: number;
+  is_imported_from_cursor: number;
   status: string;
 }
 
@@ -73,6 +76,9 @@ export function rowToMeta(row: ConversationRow): ConversationMeta {
       ? { text: row.last_sent_text, timestamp: row.last_sent_at ?? "" }
       : null,
     lastPrompt: row.last_prompt ?? undefined,
+    ...(row.is_imported_from_claude === 1 ? { isImportedFromClaude: true } : {}),
+    ...(row.is_imported_from_codex === 1 ? { isImportedFromCodex: true } : {}),
+    ...(row.is_imported_from_cursor === 1 ? { isImportedFromCursor: true } : {}),
   };
 }
 
@@ -92,7 +98,8 @@ export class ConversationsRepo {
            timestamp, index_seq, first_sent_at, first_sent_text, last_sent_at, last_sent_text,
            model, is_subagent, parent_session_id, subagent_id, parent_session_uuid,
            is_teammate, team_name, tool_names_json,
-           last_prompt, status, updated_at
+           last_prompt, is_imported_from_claude, is_imported_from_codex,
+           is_imported_from_cursor, status, updated_at
          ) VALUES (
            @file_id, @source_path, @provider, @kind, @external_session_id,
            @session_id, @session_name, @project_path, @project_name,
@@ -103,7 +110,8 @@ export class ConversationsRepo {
            @first_sent_at, @first_sent_text, @last_sent_at, @last_sent_text,
            @model, @is_subagent, @parent_session_id, @subagent_id, @parent_session_uuid,
            @is_teammate, @team_name, @tool_names_json,
-           @last_prompt, 'active', CURRENT_TIMESTAMP
+           @last_prompt, @is_imported_from_claude, @is_imported_from_codex,
+           @is_imported_from_cursor, 'active', CURRENT_TIMESTAMP
          )
          ON CONFLICT(file_id) DO UPDATE SET
            source_path = excluded.source_path,
@@ -135,6 +143,9 @@ export class ConversationsRepo {
            team_name = excluded.team_name,
            tool_names_json = excluded.tool_names_json,
            last_prompt = excluded.last_prompt,
+           is_imported_from_claude = excluded.is_imported_from_claude,
+           is_imported_from_codex = excluded.is_imported_from_codex,
+           is_imported_from_cursor = excluded.is_imported_from_cursor,
            status = 'active',
            index_seq = (SELECT COALESCE(MAX(index_seq), 0) + 1 FROM conversations),
            updated_at = CURRENT_TIMESTAMP`,
@@ -173,6 +184,9 @@ export class ConversationsRepo {
         team_name: meta.teamName,
         tool_names_json: JSON.stringify(meta.toolNames),
         last_prompt: meta.lastPrompt ?? null,
+        is_imported_from_claude: meta.isImportedFromClaude ? 1 : 0,
+        is_imported_from_codex: meta.isImportedFromCodex ? 1 : 0,
+        is_imported_from_cursor: meta.isImportedFromCursor ? 1 : 0,
       });
   }
 

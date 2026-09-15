@@ -1,4 +1,5 @@
 import { extractThinking } from "./parser";
+import { looksLikeCursorChatEntry, unwrapCursorUserText } from "./providers/cursor";
 import { cleanSystemTags } from "./tags";
 
 // The derived search corpus: one document per conversation, split into three
@@ -96,7 +97,39 @@ export function extractSearchDelta(entry: Record<string, unknown>): SearchDocume
   if (entry.type === "response_item" || entry.type === "session_meta") {
     return extractCodexDelta(entry);
   }
+  if (looksLikeCursorChatEntry(entry)) {
+    return extractCursorDelta(entry);
+  }
   return extractClaudeDelta(entry);
+}
+
+function extractCursorDelta(entry: Record<string, unknown>): SearchDocumentDelta {
+  const msg = entry.message as Record<string, unknown> | undefined;
+  const content = msg?.content ?? entry.content;
+  return {
+    text: extractCursorSearchText(content),
+    thinking: "",
+    tools: extractClaudeToolContent(content),
+  };
+}
+
+function extractCursorSearchText(content: unknown): string {
+  if (typeof content === "string") return unwrapCursorUserText(content);
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const item of content) {
+    if (typeof item === "string") {
+      const cleaned = unwrapCursorUserText(item);
+      if (cleaned) parts.push(cleaned);
+    } else if (
+      (item?.type === "text" || item?.type === undefined) &&
+      typeof item?.text === "string"
+    ) {
+      const cleaned = unwrapCursorUserText(item.text);
+      if (cleaned) parts.push(cleaned);
+    }
+  }
+  return parts.join(SEP);
 }
 
 function extractClaudeDelta(entry: Record<string, unknown>): SearchDocumentDelta {

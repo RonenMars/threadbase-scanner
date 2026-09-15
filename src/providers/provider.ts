@@ -28,10 +28,39 @@ export interface ScannerProvider<Acc = unknown> {
   finalize(acc: Acc, filePath: string, account: string, tier: ContentTier): ConversationMeta | null;
 }
 
-export type ScannerProviderName = "claude-code" | "codex-cli";
+export type ScannerProviderName = "claude-code" | "codex-cli" | "cursor";
 
 export const CLAUDE_CODE_PROVIDER = "claude-code" as const;
 export const CODEX_CLI_PROVIDER = "codex-cli" as const;
+export const CURSOR_PROVIDER = "cursor" as const;
+/** Live PTY on main shipped this wire name; accept it and emit `cursor`. */
+export const LEGACY_CURSOR_PROVIDER = "cursor-cli" as const;
+
+export function canonicalizeProviderName(value: string): ScannerProviderName | undefined {
+  if (value === LEGACY_CURSOR_PROVIDER) return CURSOR_PROVIDER;
+  if (value === CLAUDE_CODE_PROVIDER || value === CODEX_CLI_PROVIDER || value === CURSOR_PROVIDER) {
+    return value;
+  }
+  return undefined;
+}
+
+export function canonicalizeProviderList(
+  providers: readonly string[] | undefined,
+): ScannerProviderName[] {
+  const src = providers ?? [CLAUDE_CODE_PROVIDER];
+  const out: ScannerProviderName[] = [];
+  for (const p of src) {
+    const n = canonicalizeProviderName(p);
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+export function providerMatches(stored: string | undefined, wanted: string): boolean {
+  const a = canonicalizeProviderName(stored ?? CLAUDE_CODE_PROVIDER) ?? stored;
+  const b = canonicalizeProviderName(wanted) ?? wanted;
+  return a === b;
+}
 
 export interface DiscoveredConversationFile {
   filePath: string;

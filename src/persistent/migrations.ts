@@ -132,6 +132,51 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v7 → v8: import provenance columns. Cursor agent-transcripts can be copies
+  // of Claude or Codex sessions; the flags are folded out of the JSONL, so an
+  // already-indexed Cursor file would keep 0 forever without a reindex.
+  if (current >= 1 && current < 8 && tableExists(db, "conversations")) {
+    for (const [col, ddl] of [
+      [
+        "is_imported_from_claude",
+        "ALTER TABLE conversations ADD COLUMN is_imported_from_claude INTEGER NOT NULL DEFAULT 0",
+      ],
+      [
+        "is_imported_from_codex",
+        "ALTER TABLE conversations ADD COLUMN is_imported_from_codex INTEGER NOT NULL DEFAULT 0",
+      ],
+      [
+        "is_imported_from_cursor",
+        "ALTER TABLE conversations ADD COLUMN is_imported_from_cursor INTEGER NOT NULL DEFAULT 0",
+      ],
+    ] as const) {
+      if (!hasColumn(db, "conversations", col)) db.exec(ddl);
+    }
+    if (tableExists(db, "conversation_files")) {
+      const assignments: string[] = [];
+      if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+        assignments.push("last_indexed_offset = 0");
+      }
+      if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+        assignments.push("last_indexed_line = 0");
+      }
+      if (hasColumn(db, "conversation_files", "reducer_state")) {
+        assignments.push("reducer_state = NULL");
+      }
+      if (assignments.length > 0) {
+        db.exec(
+          `UPDATE conversation_files SET ${assignments.join(", ")}
+           WHERE id IN (SELECT file_id FROM conversations WHERE provider IN ('cursor', 'cursor-cli'))`,
+        );
+      }
+    }
+  }
+
+  // v8 → v9: wire name `cursor-cli` → `cursor`. Live PTY shipped the old name.
+  if (current >= 1 && current < 9 && tableExists(db, "conversations")) {
+    db.exec(`UPDATE conversations SET provider = 'cursor' WHERE provider = 'cursor-cli'`);
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);

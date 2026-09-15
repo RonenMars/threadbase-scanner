@@ -1,0 +1,2 @@
+{"type":"user","uuid":"u1","timestamp":"2026-06-18T17:22:06.000Z","sessionId":"sess-imported-claude","cwd":"/Users/dev/projects/widget","message":{"role":"user","content":[{"type":"text","text":"How did this Claude session get here?"}]}}
+{"type":"assistant","uuid":"u2","timestamp":"2026-06-18T17:22:08.000Z","sessionId":"sess-imported-claude","message":{"role":"assistant","content":[{"type":"text","text":"This file keeps Claude's envelope after import into agent-transcripts."}]}}

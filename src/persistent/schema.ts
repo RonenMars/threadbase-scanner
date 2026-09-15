@@ -22,7 +22,9 @@
 // which sessionId cannot carry (it holds the PARENT's id on a sidechain).
 // v7: reindex only — Codex previews/titles/counts no longer include the
 // AGENTS.md turn Codex prepends as the first `user` message.
-export const SCHEMA_VERSION = 7;
+// v8: import-provenance flags on conversations (is_imported_from_*).
+// v9: rename stored provider `cursor-cli` → `cursor`.
+export const SCHEMA_VERSION = 9;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -107,6 +109,10 @@ CREATE TABLE IF NOT EXISTS conversations (
   team_name TEXT,
   tool_names_json TEXT,
   last_prompt TEXT,
+
+  is_imported_from_claude INTEGER NOT NULL DEFAULT 0,
+  is_imported_from_codex INTEGER NOT NULL DEFAULT 0,
+  is_imported_from_cursor INTEGER NOT NULL DEFAULT 0,
 
   status TEXT NOT NULL DEFAULT 'active',
 

@@ -39,7 +39,7 @@ export interface MessageSnapshot {
   timestamp: string;
 }
 
-export type ProviderName = "claude-code" | "codex-cli";
+export type ProviderName = "claude-code" | "codex-cli" | "cursor";
 
 export interface ConversationMeta {
   id: string;
@@ -83,6 +83,11 @@ export interface ConversationMeta {
   firstMessage: MessageSnapshot | null;
   lastMessage: MessageSnapshot | null;
   lastPrompt?: string;
+  // Set when a Cursor agent-transcripts file is a copy of another provider's
+  // session. isImportedFromCursor is reserved for Claude/Codex providers.
+  isImportedFromClaude?: boolean;
+  isImportedFromCodex?: boolean;
+  isImportedFromCursor?: boolean;
 }
 
 // ─── View Variants ──────────────────────────────────────────────────
@@ -105,10 +110,15 @@ export interface FileStatEntry {
 export interface ScanOptions {
   profiles?: Profile[];
   // Providers to scan. Defaults to ["claude-code"]. Including "codex-cli"
-  // requires codexRoots (no default home scan).
-  providers?: ProviderName[];
+  // requires codexRoots; including "cursor" requires cursorRoots. Neither
+  // glob $HOME by default. The live-PTY alias "cursor-cli" is accepted and
+  // stored as "cursor".
+  providers?: Array<ProviderName | "cursor-cli">;
   // Absolute roots to discover Codex CLI history under (e.g. ~/.codex/sessions).
   codexRoots?: string[];
+  // Absolute roots to discover Cursor agent-transcripts under
+  // (e.g. ~/.cursor/projects). Composer state.vscdb is out of scope.
+  cursorRoots?: string[];
   tier?: string;
   tiers?: Record<string, ContentTier>;
   include?: Include;
@@ -139,8 +149,8 @@ export interface ScanResult {
 
 export interface SearchOptions extends ScanOptions {
   fields?: string[];
-  // Restrict results to one provider.
-  provider?: ProviderName;
+  // Restrict results to one provider. Accepts the live-PTY alias "cursor-cli".
+  provider?: string;
 }
 
 // Half-open [start, end) character range into a SearchMatch.snippet marking one

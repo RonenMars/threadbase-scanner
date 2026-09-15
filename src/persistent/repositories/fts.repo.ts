@@ -1,5 +1,10 @@
 import type { Database } from "better-sqlite3";
 import { canonicalPath } from "../../canonical-path";
+import {
+  CURSOR_PROVIDER,
+  canonicalizeProviderName,
+  LEGACY_CURSOR_PROVIDER,
+} from "../../providers/provider";
 import type { SearchDocument } from "../../search-document";
 import {
   FTS_ELLIPSIS,
@@ -144,8 +149,14 @@ export class FtsRepo {
       params.push(filters.account);
     }
     if (filters.provider) {
-      where.push("c.provider = ?");
-      params.push(filters.provider);
+      const provider = canonicalizeProviderName(filters.provider) ?? filters.provider;
+      if (provider === CURSOR_PROVIDER) {
+        where.push("(c.provider = ? OR c.provider = ?)");
+        params.push(CURSOR_PROVIDER, LEGACY_CURSOR_PROVIDER);
+      } else {
+        where.push("c.provider = ?");
+        params.push(provider);
+      }
     }
     if (filters.project) {
       where.push("(lower(c.project_path) LIKE ? OR lower(c.project_name) LIKE ?)");

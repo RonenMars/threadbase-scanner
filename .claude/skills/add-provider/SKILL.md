@@ -1,13 +1,13 @@
 ---
 name: add-provider
-description: Add a new agent CLI to @threadbase-sh/scanner (ScannerProvider, opt-in roots, fixtures, persistent index). Use when adding Cursor, Codex, Gemini, Amp, Aider, OpenCode, Goose, ClawCode, Hermes, cursor-cli, history indexing, ScannerProvider, or when the user says add a provider. Live PTY and phone chips are other repos — see Companions.
+description: Add a new agent CLI to @threadbase-sh/scanner (ScannerProvider, opt-in roots, fixtures, persistent index). Use when adding Cursor, Codex, Gemini, Amp, Aider, OpenCode, Goose, ClawCode, Hermes, cursor, history indexing, ScannerProvider, or when the user says add a provider. Live PTY and phone chips are other repos — see Companions.
 ---
 
 # Add a provider (scanner)
 
 This package is the **history index** half. It has no HTTP. The streamer hosts `@threadbase-sh/scanner`. Indexing a name here does not start sessions or draw a browse chip.
 
-Canonical wire name: kebab, matching streamer/mobile (`cursor-cli`, `gemini-cli`, `opencode`, `goose`, `aider`).
+Canonical wire name: kebab, matching streamer/mobile (`cursor`, `gemini-cli`, `opencode`, `goose`, `aider`). The live-PTY alias `cursor-cli` is accepted and stored as `cursor`.
 
 Template: `src/providers/codex-cli.ts`. Format difficulty and agent table: [docs/plans/multi-agent-provider-feasibility.md](../../../docs/plans/multi-agent-provider-feasibility.md). **Read that matrix before choosing a parse strategy.**
 
@@ -52,7 +52,7 @@ Double-count traps (document the preference in the PR): Cursor agent-transcripts
 
 - `ScannerProviderName` + `ProviderName` + `ScanOptions.*Roots` (mirror `codexRoots`).
 
-Today Codex is hard-wired in `scanner.ts` / `index-engine.ts`. A new provider adds another gated `if` like Codex. Do not build a generic registry unless the user asked — but do not copy Claude's resumable fold into a SQLite agent.
+Today Codex and Cursor are hard-wired in `scanner.ts` / `index-engine.ts`. A new provider adds another gated `if` like those. Do not build a generic registry unless the user asked — but do not copy Claude's resumable fold into a SQLite agent.
 
 ## 2. Provider class
 
@@ -67,7 +67,7 @@ Today Codex is hard-wired in `scanner.ts` / `index-engine.ts`. A new provider ad
 
 - finds from `*Roots`; nothing without roots
 - `meta.provider` is the new name
-- `canParse` does not steal Claude/Codex files
+- `canParse` does not steal Claude/Codex files (copies that land under this provider's tree are claimed there — Cursor `agent-transcripts` only)
 - search `provider` filter; deletion + refresh
 
 ## 4. Publish, then bump streamer
@@ -75,6 +75,8 @@ Today Codex is hard-wired in `scanner.ts` / `index-engine.ts`. A new provider ad
 Streamer: bump `@threadbase-sh/scanner`, pass `providers` + `*Roots` from `ScannerManager` (see [streamer skill](https://github.com/RonenMars/threadbase-streamer/blob/HEAD/.claude/skills/add-provider/SKILL.md)). Default a root only if the vendor path is stable and documented.
 
 README must list the new opt-in roots.
+
+Worked example: `cursor` — `src/providers/cursor.ts`, `cursorRoots`, fixtures under `__fixtures__/cursor/`. Wire name matches streamer/mobile (`cursor-cli` is a legacy alias). Composer `state.vscdb` is out of scope. Cursor copies of Claude/Codex set `isImportedFromClaude` / `isImportedFromCodex` (schema v8); `isImportedFromCursor` is reserved for the other providers.
 
 ## Out of scope
 

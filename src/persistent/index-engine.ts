@@ -4,10 +4,13 @@ import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
 import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
+import { CursorProvider, parseCursorConversation } from "../providers/cursor";
 import { parseMetaWithProvider } from "../providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  canonicalizeProviderList,
   type ScannerProvider,
 } from "../providers/provider";
 import { appendSearchDelta, emptySearchDocument, extractSearchDelta } from "../search-document";
@@ -90,7 +93,7 @@ export class PersistentEngine {
     const log = getLogger();
     const tier = resolveTier(options.tier ?? "standard", options.tiers);
 
-    const enabled = options.providers ?? [CLAUDE_CODE_PROVIDER];
+    const enabled = canonicalizeProviderList(options.providers);
 
     // Each discovered file carries the provider that should parse it. claude-code
     // files fold through the byte-offset-resumable tail reader; Codex files
@@ -120,6 +123,12 @@ export class PersistentEngine {
     if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
       for (const f of await codex.discover(options.codexRoots as string[])) {
         discovered.push({ ...f, provider: codex });
+      }
+    }
+    const cursor = new CursorProvider();
+    if (enabled.includes(CURSOR_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
+      for (const f of await cursor.discover(options.cursorRoots as string[])) {
+        discovered.push({ ...f, provider: cursor });
       }
     }
     let scanned = 0;
@@ -172,6 +181,9 @@ export class PersistentEngine {
     }
     if (enabled.includes(CODEX_CLI_PROVIDER) && (options.codexRoots?.length ?? 0) > 0) {
       coveredAccounts.add("codex");
+    }
+    if (enabled.includes(CURSOR_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
+      coveredAccounts.add("cursor");
     }
     // Canonical form on both sides: the stored paths are canonical, and a
     // discovery source that emits native separators would otherwise leave every
@@ -459,8 +471,11 @@ export class PersistentEngine {
     // sessions are small (already reparsed from offset 0 on every change), so
     // parse the whole conversation and slice the window — identical math to the
     // claude-code path and to the legacy getConversationPage slice.
-    if (meta.provider === CODEX_CLI_PROVIDER) {
-      const conversation = await parseCodexConversation(filePath, meta.account);
+    if (meta.provider === CODEX_CLI_PROVIDER || meta.provider === CURSOR_PROVIDER) {
+      const conversation =
+        meta.provider === CODEX_CLI_PROVIDER
+          ? await parseCodexConversation(filePath, meta.account)
+          : await parseCursorConversation(filePath, meta.account);
       if (!conversation) return null;
       const { messages } = conversation;
       const total = messages.length;

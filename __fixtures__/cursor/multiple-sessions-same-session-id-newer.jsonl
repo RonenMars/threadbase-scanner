@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Tuesday, Jun 19, 2026, 1:00 PM (UTC+0)</timestamp>\n<user_query>\nNewer copy of the same id\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"This is the beta workspace."}]}}
