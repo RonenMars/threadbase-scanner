@@ -49,11 +49,88 @@ const eventMsgLine = line({
   type: "event_msg",
   payload: { type: "agent_reasoning", text: "thinking" },
 });
+// Tool/reasoning fixtures keep every key a real Codex 0.15x rollout item carries
+// (values shortened), so a parser keyed on a renamed field fails here.
+const passthrough = { internal_chat_message_metadata_passthrough: { turn_id: "turn-1" } };
 const functionCallLine = line({
   timestamp: "2026-06-18T17:23:06.000Z",
+  ordinal: 10,
   type: "response_item",
-  payload: { type: "function_call", name: "shell", arguments: "{}" },
+  payload: {
+    type: "function_call",
+    id: "fc_1",
+    name: "exec_command",
+    arguments: '{"cmd":"ls -la"}',
+    call_id: "call_A",
+    ...passthrough,
+  },
 });
+const functionCallOutputLine = line({
+  timestamp: "2026-06-18T17:23:06.500Z",
+  ordinal: 11,
+  type: "response_item",
+  payload: {
+    type: "function_call_output",
+    id: "fco_1",
+    call_id: "call_A",
+    output: "Process exited with code 0\ntotal 0",
+    ...passthrough,
+  },
+});
+const customToolCallLine = line({
+  timestamp: "2026-06-18T17:23:08.000Z",
+  ordinal: 14,
+  type: "response_item",
+  payload: {
+    type: "custom_tool_call",
+    id: "ctc_1",
+    status: "completed",
+    call_id: "call_B",
+    name: "exec",
+    input: "const r = await tools.exec_command({cmd: 'pwd'})",
+    ...passthrough,
+  },
+});
+const customToolCallOutputLine = line({
+  timestamp: "2026-06-18T17:23:08.500Z",
+  ordinal: 16,
+  type: "response_item",
+  payload: {
+    type: "custom_tool_call_output",
+    id: "ctco_1",
+    call_id: "call_B",
+    output: [
+      { type: "input_text", text: "Script completed" },
+      { type: "input_text", text: "/home/dev/widget" },
+    ],
+    ...passthrough,
+  },
+});
+const webSearchLine = line({
+  timestamp: "2026-06-18T17:23:09.000Z",
+  ordinal: 31,
+  type: "response_item",
+  payload: {
+    type: "web_search_call",
+    id: "ws_1",
+    status: "completed",
+    action: { type: "search", query: "codex config", queries: ["codex config"] },
+    ...passthrough,
+  },
+});
+const reasoningLine = (summary: unknown[]) =>
+  line({
+    timestamp: "2026-06-18T17:23:10.000Z",
+    ordinal: 55,
+    type: "response_item",
+    payload: {
+      type: "reasoning",
+      id: "rs_1",
+      summary,
+      encrypted_content: "gAAAAABq",
+      ...passthrough,
+    },
+  });
 
 describe("parseCodexJsonlLine", () => {
   it("parses a user message", () => {
@@ -88,8 +165,109 @@ describe("parseCodexJsonlLine", () => {
     expect(parseCodexJsonlLine(eventMsgLine)).toBeNull();
   });
 
-  it("drops a tool call", () => {
-    expect(parseCodexJsonlLine(functionCallLine)).toBeNull();
+  it("keys a message on its rollout item id", () => {
+    const withId = line({
+      timestamp: "2026-06-18T17:23:02.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        id: "msg_1",
+        role: "assistant",
+        content: [{ type: "output_text", text: "hi" }],
+      },
+    });
+    expect(parseCodexJsonlLine(withId)?.uuid).toBe("msg_1");
+  });
+
+  it("parses a function call as a tool_use block with parsed arguments", () => {
+    expect(parseCodexJsonlLine(functionCallLine)).toEqual({
+      role: "assistant",
+      text: "",
+      timestamp: "2026-06-18T17:23:06.000Z",
+      uuid: "fc_1",
+      metadata: {
+        toolUses: ["exec_command"],
+        toolUseBlocks: [{ id: "call_A", name: "exec_command", input: { cmd: "ls -la" } }],
+      },
+    });
+  });
+
+  it("keeps non-JSON function arguments as a raw string", () => {
+    const raw = line({
+      type: "response_item",
+      payload: { type: "function_call", name: "shell", arguments: "not json", call_id: "c" },
+    });
+    expect(parseCodexJsonlLine(raw)?.metadata?.toolUseBlocks?.[0].input).toEqual({
+      arguments: "not json",
+    });
+  });
+
+  it("parses a custom tool call with its raw input", () => {
+    expect(parseCodexJsonlLine(customToolCallLine)?.metadata?.toolUseBlocks).toEqual([
+      {
+        id: "call_B",
+        name: "exec",
+        input: { input: "const r = await tools.exec_command({cmd: 'pwd'})" },
+      },
+    ]);
+  });
+
+  it("parses a web search as a web_search tool_use", () => {
+    expect(parseCodexJsonlLine(webSearchLine)?.metadata?.toolUseBlocks).toEqual([
+      {
+        id: "ws_1",
+        name: "web_search",
+        input: { type: "search", query: "codex config", queries: ["codex config"] },
+      },
+    ]);
+  });
+
+  it("parses a string tool output as a tool result tied to its call", () => {
+    expect(parseCodexJsonlLine(functionCallOutputLine)).toEqual({
+      role: "user",
+      text: "",
+      timestamp: "2026-06-18T17:23:06.500Z",
+      uuid: "fco_1",
+      isToolResult: true,
+      metadata: {
+        toolResults: [
+          {
+            toolUseId: "call_A",
+            type: "generic",
+            content: { output: "Process exited with code 0\ntotal 0" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("joins an array tool output's text parts", () => {
+    expect(parseCodexJsonlLine(customToolCallOutputLine)?.metadata?.toolResults?.[0]).toEqual({
+      toolUseId: "call_B",
+      type: "generic",
+      content: { output: "Script completed\n/home/dev/widget" },
+    });
+  });
+
+  it("parses a reasoning summary as thinking", () => {
+    const msg = parseCodexJsonlLine(
+      reasoningLine([
+        { type: "summary_text", text: "**Checking the pane**" },
+        { type: "summary_text", text: "**Reading the log**" },
+      ]),
+    );
+    expect(msg).toMatchObject({
+      role: "assistant",
+      text: "",
+      uuid: "rs_1",
+      isThinking: true,
+      thinkingContent: "**Checking the pane**\n\n**Reading the log**",
+    });
+  });
+
+  it("drops reasoning with no readable summary", () => {
+    expect(parseCodexJsonlLine(reasoningLine([]))).toBeNull();
+    expect(parseCodexJsonlLine(reasoningLine([{ type: "summary_text", text: "" }]))).toBeNull();
   });
 
   it("returns null on malformed input instead of throwing", () => {
@@ -138,6 +316,19 @@ describe("parseCodexJsonlLine / parseCodexConversation equivalence", () => {
 
     expect(conversation).not.toBeNull();
     expect(conversation?.messages).toEqual(perLine);
-    expect(perLine).toHaveLength(3);
+    // user, assistant, function call, second turn.
+    expect(perLine).toHaveLength(4);
+  });
+
+  it("does not let a trailing tool result blank lastPrompt or pad fullText", async () => {
+    const filePath = join(dir, "rollout-2026-06-18T17-23-00-tail.jsonl");
+    writeFileSync(
+      filePath,
+      `${[sessionMetaLine, userLine, functionCallLine, functionCallOutputLine].join("\n")}\n`,
+    );
+    const conversation = await parseCodexConversation(filePath, "codex");
+    expect(conversation?.messages).toHaveLength(3);
+    expect(conversation?.lastPrompt).toBe("hello");
+    expect(conversation?.fullText).toBe("hello");
   });
 });

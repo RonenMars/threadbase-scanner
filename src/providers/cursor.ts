@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import fg from "fast-glob";
 import { createReadStream, existsSync, statSync } from "fs";
 import { stat } from "fs/promises";
@@ -14,6 +15,7 @@ import type {
   ConversationMeta,
   MessageSender,
   MessageSnapshot,
+  ToolUseBlock,
 } from "../types";
 import { parseCodexJsonlLine } from "./codex-cli";
 import { CURSOR_PROVIDER, type DiscoveredConversationFile, type ScannerProvider } from "./provider";
@@ -279,22 +281,59 @@ function cursorEntryToMessage(entry: Record<string, unknown>): ConversationMessa
   if (looksLikeCursorChatEntry(entry)) {
     const role = entry.role as MessageSender;
     const message = entry.message as { content?: unknown } | undefined;
-    const text = extractCursorText(message?.content ?? entry.content);
-    if (!text) return null;
-    const ts = firstTimestampHint(message?.content ?? entry.content);
-    return { role, text, timestamp: ts };
+    const content = message?.content ?? entry.content;
+    return withToolUses(
+      { role, text: extractCursorText(content), timestamp: firstTimestampHint(content) },
+      content,
+    );
   }
   if (looksLikeImportedClaudeEntry(entry)) {
     const message = entry.message as { content?: unknown; role?: string } | undefined;
     const role = (
       message?.role === "assistant" || entry.type === "assistant" ? "assistant" : "user"
     ) as MessageSender;
-    const text = extractCursorText(message?.content ?? entry.content);
-    if (!text) return null;
-    const ts = asString(entry.timestamp);
-    return { role, text, timestamp: ts };
+    const content = message?.content ?? entry.content;
+    return withToolUses(
+      { role, text: extractCursorText(content), timestamp: asString(entry.timestamp) },
+      content,
+    );
   }
   return parseCodexJsonlLine(JSON.stringify(entry));
+}
+
+// Attach the line's tool_use blocks, the same metadata the Claude parser fills.
+// A message renders when it has text or tool calls; neither → null.
+function withToolUses(message: ConversationMessage, content: unknown): ConversationMessage | null {
+  const blocks = extractCursorToolUseBlocks(content);
+  if (blocks.length === 0) return message.text ? message : null;
+  return {
+    ...message,
+    metadata: { toolUses: blocks.map((b) => b.name), toolUseBlocks: blocks },
+  };
+}
+
+// Cursor's tool_use blocks carry no id, and ToolUseBlock needs one, so derive a
+// stable one from the call itself: re-reading the same line yields the same id.
+function extractCursorToolUseBlocks(content: unknown): ToolUseBlock[] {
+  if (!Array.isArray(content)) return [];
+  const blocks: ToolUseBlock[] = [];
+  for (const item of content) {
+    const block = item as { type?: string; id?: string; name?: string; input?: unknown };
+    if (block?.type !== "tool_use" || typeof block.name !== "string" || !block.name) continue;
+    const input =
+      block.input && typeof block.input === "object" && !Array.isArray(block.input)
+        ? (block.input as Record<string, unknown>)
+        : {};
+    const id =
+      typeof block.id === "string" && block.id
+        ? block.id
+        : `cursor-tool-${createHash("sha1")
+            .update(`${block.name}\0${JSON.stringify(input)}`)
+            .digest("hex")
+            .slice(0, 16)}`;
+    blocks.push({ id, name: block.name, input });
+  }
+  return blocks;
 }
 
 function foldCursorMessage(
@@ -349,14 +388,14 @@ export function reduceCursorEntry(
   if (looksLikeImportedClaudeEntry(entry)) {
     collectCursorToolNames(content, acc.toolNames);
     const msg = cursorEntryToMessage(entry);
-    if (!msg) return;
+    if (!msg?.text) return;
     foldCursorMessage(acc, msg.role, msg.text, msg.timestamp, tier);
     return;
   }
 
   if (looksLikeImportedCodexEntry(entry)) {
     const msg = parseCodexJsonlLine(JSON.stringify(entry));
-    if (!msg) return;
+    if (!msg?.text) return;
     foldCursorMessage(acc, msg.role, msg.text, msg.timestamp, tier);
   }
 }
@@ -503,6 +542,8 @@ export async function parseCursorConversation(
         latestTimestamp = message.timestamp;
       }
       messages.push(message);
+      // Tool-only messages carry no text; they must not blank lastPrompt.
+      if (!message.text) continue;
       textParts.push(message.text);
       if (message.role === "user") lastUserText = message.text;
     }

@@ -14,6 +14,7 @@ import type {
   ConversationMeta,
   MessageSender,
   MessageSnapshot,
+  ToolUseBlock,
 } from "../types";
 import {
   CODEX_CLI_PROVIDER,
@@ -154,7 +155,7 @@ function extractCodexText(content: unknown): string {
 }
 
 // Map one raw Codex rollout JSONL line to the message it renders as, or null
-// when it renders as nothing (session_meta, event_msg, tool calls,
+// when it renders as nothing (session_meta, event_msg, encrypted reasoning,
 // developer/system roles, an empty-after-cleanSystemTags body, malformed JSON).
 // Stateless — a Codex line carries everything the decision needs — and tolerant
 // by construction: it never throws. parseCodexConversation() below delegates to
@@ -172,15 +173,110 @@ export function parseCodexJsonlLine(line: string): ConversationMessage | null {
 
 // Same decision, on an already-parsed entry — lets parseCodexConversation reuse
 // its single JSON.parse (it also needs session_meta and the timestamp).
+//
+// Tool calls, their outputs and reasoning summaries render too, in the shape the
+// Claude parser gives them (toolUseBlocks / toolResults / thinkingContent with
+// empty text), so a host renders every provider with one mapper. `uuid` is the
+// rollout item id, which is also what a host's live stream keys the line on.
 function codexEntryToMessage(entry: Record<string, unknown>): ConversationMessage | null {
   const payload = entry.payload as Record<string, unknown> | undefined;
   if (!payload || typeof payload !== "object") return null;
-  if (entry.type !== "response_item" || payload.type !== "message") return null;
-  const role = payload.role;
-  if (role !== "user" && role !== "assistant") return null;
-  const text = extractCodexText(payload.content);
-  if (!text) return null;
-  return { role: role as MessageSender, text, timestamp: asString(entry.timestamp) };
+  if (entry.type !== "response_item") return null;
+  const timestamp = asString(entry.timestamp);
+  const uuid = asString(payload.id) || undefined;
+  const base = { timestamp, ...(uuid ? { uuid } : {}) };
+
+  switch (payload.type) {
+    case "message": {
+      const role = payload.role;
+      if (role !== "user" && role !== "assistant") return null;
+      const text = extractCodexText(payload.content);
+      if (!text) return null;
+      return { role: role as MessageSender, text, ...base };
+    }
+    case "function_call":
+    case "custom_tool_call":
+    case "web_search_call": {
+      const block = codexToolUseBlock(payload);
+      if (!block) return null;
+      return {
+        role: "assistant",
+        text: "",
+        ...base,
+        metadata: { toolUses: [block.name], toolUseBlocks: [block] },
+      };
+    }
+    case "function_call_output":
+    case "custom_tool_call_output": {
+      const toolUseId = asString(payload.call_id);
+      if (!toolUseId) return null;
+      return {
+        role: "user",
+        text: "",
+        ...base,
+        isToolResult: true,
+        metadata: {
+          toolResults: [
+            {
+              toolUseId,
+              type: "generic",
+              content: { output: codexToolOutputText(payload.output) },
+            },
+          ],
+        },
+      };
+    }
+    case "reasoning": {
+      // Almost always encrypted_content with an empty summary; only a readable
+      // summary renders.
+      const summary = Array.isArray(payload.summary) ? payload.summary : [];
+      const thinkingContent = summary
+        .map((s) => asString((s as Record<string, unknown>)?.text))
+        .filter((t) => t.trim())
+        .join("\n\n");
+      if (!thinkingContent) return null;
+      return { role: "assistant", text: "", ...base, isThinking: true, thinkingContent };
+    }
+    default:
+      return null;
+  }
+}
+
+function codexToolUseBlock(payload: Record<string, unknown>): ToolUseBlock | null {
+  if (payload.type === "web_search_call") {
+    const action = payload.action;
+    return {
+      id: asString(payload.id),
+      name: "web_search",
+      input: action && typeof action === "object" ? (action as Record<string, unknown>) : {},
+    };
+  }
+  const name = asString(payload.name);
+  if (!name) return null;
+  const id = asString(payload.call_id);
+  if (payload.type === "custom_tool_call") {
+    return { id, name, input: { input: asString(payload.input) } };
+  }
+  const args = asString(payload.arguments);
+  let input: Record<string, unknown> = { arguments: args };
+  try {
+    const parsed = JSON.parse(args);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) input = parsed;
+  } catch {
+    // Not JSON — keep the raw string.
+  }
+  return { id, name, input };
+}
+
+// Tool output is a plain string or an array of {type: input_text, text} parts.
+// Not run through cleanSystemTags: it is program output, shown verbatim.
+function codexToolOutputText(output: unknown): string {
+  if (typeof output === "string") return output;
+  if (!Array.isArray(output)) return "";
+  return output
+    .map((item) => (typeof item === "string" ? item : asString(item?.text)))
+    .filter(Boolean)
+    .join("\n");
 }
 
 // Fold one Codex rollout line into the accumulator. Tolerant by construction:
@@ -394,6 +490,8 @@ export async function parseCodexConversation(
       const message = codexEntryToMessage(entry);
       if (!message) continue;
       messages.push(message);
+      // Tool and thinking messages carry no text; they must not blank lastPrompt.
+      if (!message.text) continue;
       textParts.push(message.text);
       if (message.role === "user") lastUserText = message.text;
     }
