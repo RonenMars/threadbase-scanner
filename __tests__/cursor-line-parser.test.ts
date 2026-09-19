@@ -60,3 +60,37 @@ describe("parseCursorJsonlLine tool_use", () => {
     expect(parseCursorJsonlLine(line({ type: "turn_ended", status: "error" }))).toBeNull();
   });
 });
+
+describe("parseCursorJsonlLine uuid", () => {
+  const user = line({ role: "user", message: { content: [{ type: "text", text: "continue" }] } });
+
+  it("derives the same uuid for the same line at the same position", () => {
+    expect(parseCursorJsonlLine(user, 3)?.uuid).toBe(parseCursorJsonlLine(user, 3)?.uuid);
+    expect(parseCursorJsonlLine(user, 3)?.uuid).toMatch(/^cursor-user-3-[0-9a-f]{16}$/);
+  });
+
+  it("keeps a repeated identical line distinct by position", () => {
+    expect(parseCursorJsonlLine(user, 3)?.uuid).not.toBe(parseCursorJsonlLine(user, 7)?.uuid);
+  });
+
+  it("ignores surrounding whitespace, such as a CRLF line ending", () => {
+    expect(parseCursorJsonlLine(`${user}\r`, 3)?.uuid).toBe(parseCursorJsonlLine(user, 3)?.uuid);
+  });
+
+  it("falls back to a content-only uuid when the position is unknown", () => {
+    expect(parseCursorJsonlLine(user)?.uuid).toMatch(/^cursor-user-[0-9a-f]{16}$/);
+  });
+
+  it("keeps the id an imported Codex item already carries", () => {
+    const codex = line({
+      type: "response_item",
+      payload: {
+        type: "message",
+        id: "msg_1",
+        role: "assistant",
+        content: [{ type: "output_text", text: "hi" }],
+      },
+    });
+    expect(parseCursorJsonlLine(codex, 0)?.uuid).toBe("msg_1");
+  });
+});

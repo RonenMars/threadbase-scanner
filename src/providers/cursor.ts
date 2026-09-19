@@ -266,15 +266,33 @@ function firstTimestampHint(content: unknown): string {
   return "";
 }
 
-export function parseCursorJsonlLine(line: string): ConversationMessage | null {
-  if (!line.trim()) return null;
+// `index` is the line's message index in its file — the position a full parse
+// gives it, which is also a host's message_index. Pass it whenever it is known:
+// it goes into the uuid (see cursorMessageUuid).
+export function parseCursorJsonlLine(line: string, index?: number): ConversationMessage | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
   let entry: Record<string, unknown>;
   try {
-    entry = JSON.parse(line);
+    entry = JSON.parse(trimmed);
   } catch {
     return null;
   }
-  return cursorEntryToMessage(entry);
+  const message = cursorEntryToMessage(entry);
+  if (!message || message.uuid) return message;
+  return { ...message, uuid: cursorMessageUuid(trimmed, message.role, index) };
+}
+
+// Cursor lines carry no id, so derive one a host can match a live copy of the
+// message against its history copy with: the same line at the same position
+// always yields the same uuid. Content alone is not enough — ~1% of real
+// transcript lines repeat an earlier line byte-for-byte (a re-sent prompt, the
+// same Read twice), and a content-only id would merge them. The position makes
+// repeats distinct; the content hash keeps a mismatched position from matching
+// a different message.
+function cursorMessageUuid(line: string, role: MessageSender, index: number | undefined): string {
+  const hash = createHash("sha1").update(line).digest("hex").slice(0, 16);
+  return index === undefined ? `cursor-${role}-${hash}` : `cursor-${role}-${index}-${hash}`;
 }
 
 function cursorEntryToMessage(entry: Record<string, unknown>): ConversationMessage | null {
@@ -536,7 +554,7 @@ export async function parseCursorConversation(
   const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
   try {
     for await (const line of rl) {
-      const message = parseCursorJsonlLine(line);
+      const message = parseCursorJsonlLine(line, messages.length);
       if (!message) continue;
       if (message.timestamp && (!latestTimestamp || message.timestamp > latestTimestamp)) {
         latestTimestamp = message.timestamp;

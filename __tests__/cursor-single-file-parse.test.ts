@@ -97,3 +97,36 @@ describe("provider resolution on the Cursor single-file paths", () => {
     });
   });
 });
+
+describe("parseCursorConversation uuid", () => {
+  it("numbers each message by its position, so repeated lines stay distinct", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const { parseCursorConversation, parseCursorJsonlLine } = await import(
+      "../src/providers/cursor"
+    );
+    const dir = mkdtempSync(join(tmpdir(), "cursor-uuid-"));
+    try {
+      const same = JSON.stringify({
+        role: "user",
+        message: { content: [{ type: "text", text: "continue" }] },
+      });
+      const lines = [same, JSON.stringify({ type: "turn_ended", status: "success" }), same];
+      const file = join(dir, "agent-transcripts", "abc.jsonl");
+      await import("fs").then((fs) => fs.mkdirSync(join(dir, "agent-transcripts")));
+      writeFileSync(file, `${lines.join("\n")}\n`);
+      const conversation = await parseCursorConversation(file, "cursor");
+      const uuids = conversation?.messages.map((m) => m.uuid);
+      // A live host numbers the same way (turn_ended is not a message), so its
+      // parse of line 3 with seq 1 must produce the same id.
+      expect(uuids).toEqual([
+        parseCursorJsonlLine(same, 0)?.uuid,
+        parseCursorJsonlLine(same, 1)?.uuid,
+      ]);
+      expect(uuids?.[0]).not.toBe(uuids?.[1]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
