@@ -24,7 +24,9 @@
 // AGENTS.md turn Codex prepends as the first `user` message.
 // v8: import-provenance flags on conversations (is_imported_from_*).
 // v9: rename stored provider `cursor-cli` → `cursor`.
-export const SCHEMA_VERSION = 9;
+// v10: reindex only — cleanSystemTags() now unwraps <pasted_content> instead of
+// leaving the tag as the title/preview.
+export const SCHEMA_VERSION = 10;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
