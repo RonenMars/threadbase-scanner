@@ -177,6 +177,26 @@ export function runMigrations(db: Database): void {
     db.exec(`UPDATE conversations SET provider = 'cursor' WHERE provider = 'cursor-cli'`);
   }
 
+  // v9 → v10: no schema change — a reindex only. cleanSystemTags() now unwraps
+  // <pasted_content id="XXXX"> instead of leaving the opening tag as the
+  // title/preview, so an already-indexed conversation with a pasted first
+  // message would keep showing the tag forever without a reindex.
+  if (current >= 1 && current < 10 && tableExists(db, "conversation_files")) {
+    const assignments: string[] = [];
+    if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+      assignments.push("last_indexed_offset = 0");
+    }
+    if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+      assignments.push("last_indexed_line = 0");
+    }
+    if (hasColumn(db, "conversation_files", "reducer_state")) {
+      assignments.push("reducer_state = NULL");
+    }
+    if (assignments.length > 0) {
+      db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);

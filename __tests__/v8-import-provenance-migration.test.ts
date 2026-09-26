@@ -77,12 +77,16 @@ describe("v7 → v8 migration adds import-provenance columns", () => {
     expect(cursor.last_indexed_line).toBe(0);
     expect(cursor.reducer_state).toBeNull();
 
+    // The v7 → v8 step itself only reindexes cursor/cursor-cli files, but this
+    // DB starts at v7 and runMigrations() runs the whole chain up to
+    // SCHEMA_VERSION, so the later v9 → v10 step (unscoped reindex, see
+    // schema.ts) also resets this claude-code file.
     const claude = db.prepare("SELECT * FROM conversation_files WHERE id = 2").get() as Record<
       string,
       unknown
     >;
-    expect(claude.last_indexed_offset).toBe(2048);
-    expect(claude.last_indexed_line).toBe(8);
+    expect(claude.last_indexed_offset).toBe(0);
+    expect(claude.last_indexed_line).toBe(0);
 
     const renamed = db.prepare("SELECT provider FROM conversations WHERE file_id = 1").get() as {
       provider: string;
