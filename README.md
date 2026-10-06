@@ -20,7 +20,7 @@ Combines the best parts of four independent scanner implementations (VS Code, El
 - **Filtering** — by project, account, time range, conversation type (conversations/subagents/teammates)
 - **5 sort modes** — recent, oldest, messages-desc, messages-asc, alphabetical
 - **Pagination** — limit/offset on all operations
-- **Multi-provider** — index Threadbase/Claude history, local OpenAI Codex CLI sessions, and Cursor agent-transcripts through one normalized pipeline (Codex and Cursor are opt-in)
+- **Multi-provider** — index Threadbase/Claude history, local OpenAI Codex CLI sessions, Cursor agent-transcripts, and GitHub Copilot CLI sessions through one normalized pipeline (all but Claude are opt-in)
 - **Multi-profile** — scan multiple Claude config directories
 - **LRU caching** — metadata and conversation caches for fast repeated access
 - **Git branch detection** — reads `.git/HEAD` with parent directory walking
@@ -127,14 +127,15 @@ import { join } from 'node:path'
 const scanner = new ConversationScanner()
 
 const result = await scanner.scan({
-  providers: ['claude-code', 'codex-cli', 'cursor'],
+  providers: ['claude-code', 'codex-cli', 'cursor', 'copilot'],
   codexRoots: [join(homedir(), '.codex/sessions')],
   cursorRoots: [join(homedir(), '.cursor/projects')],
+  copilotRoots: [join(homedir(), '.copilot/session-state')],
 })
 
 // Each meta carries its source provider
 for (const c of result.conversations) {
-  console.log(c.provider) // 'claude-code' | 'codex-cli' | 'cursor'
+  console.log(c.provider) // 'claude-code' | 'codex-cli' | 'cursor' | 'copilot'
 }
 
 // Search across all, or filter to one provider
@@ -153,6 +154,15 @@ filename stem (`<runId>.jsonl`). The wire name is **`cursor`**. The live PTY
 name `cursor-cli` is still accepted as an alias. Not `cursor-agent`. Cursor copies of another provider
 set `isImportedFromClaude` or `isImportedFromCodex`; `isImportedFromCursor` is
 reserved for Claude/Codex providers.
+
+**GitHub Copilot CLI** (wire name **`copilot`**) keeps one directory per
+session, `<root>/<sessionId>/events.jsonl`. Pass the `session-state` directory
+(or the Copilot home above it; `COPILOT_HOME` moves it) as `copilotRoots`. The
+prompt is indexed as typed (`user.message`), with the assistant's replies and
+tool calls (`assistant.message`). A Copilot `sessionId` is the id in
+`session.start`, which is also the directory name. Tool results, reasoning and
+the `session-store.db` SQLite index are not read, and Copilot Chat in VS Code is
+a different store that is not indexed.
 
 #### Resolving an id to its transcript file
 
@@ -349,7 +359,7 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `isTeammate` | boolean | VS Code |
 | `teamName` | string \| null | VS Code |
 | `toolNames` | string[] | CLI |
-| `provider` | `'claude-code' \| 'codex-cli' \| 'cursor'` | Provider that produced the meta |
+| `provider` | `'claude-code' \| 'codex-cli' \| 'cursor' \| 'copilot'` | Provider that produced the meta |
 | `kind` | `'conversation' \| 'task'` | Codex / Cursor (optional) |
 | `externalSessionId` | string | Provider-native session id (optional) |
 | `isImportedFromClaude` | boolean | Cursor copy of a Claude session (optional; omit when false) |

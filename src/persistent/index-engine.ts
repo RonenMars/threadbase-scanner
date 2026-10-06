@@ -4,11 +4,13 @@ import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
 import { getProjectsDir } from "../profiles";
 import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
+import { CopilotProvider, parseCopilotConversation } from "../providers/copilot";
 import { CursorProvider, parseCursorConversation } from "../providers/cursor";
 import { parseMetaWithProvider } from "../providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderList,
   type ScannerProvider,
@@ -131,6 +133,12 @@ export class PersistentEngine {
         discovered.push({ ...f, provider: cursor });
       }
     }
+    const copilot = new CopilotProvider();
+    if (enabled.includes(COPILOT_PROVIDER) && (options.copilotRoots?.length ?? 0) > 0) {
+      for (const f of await copilot.discover(options.copilotRoots as string[])) {
+        discovered.push({ ...f, provider: copilot });
+      }
+    }
     let scanned = 0;
 
     const gitBranchMemo = new Map<string, string | null>();
@@ -184,6 +192,9 @@ export class PersistentEngine {
     }
     if (enabled.includes(CURSOR_PROVIDER) && (options.cursorRoots?.length ?? 0) > 0) {
       coveredAccounts.add("cursor");
+    }
+    if (enabled.includes(COPILOT_PROVIDER) && (options.copilotRoots?.length ?? 0) > 0) {
+      coveredAccounts.add("copilot");
     }
     // Canonical form on both sides: the stored paths are canonical, and a
     // discovery source that emits native separators would otherwise leave every
@@ -471,11 +482,17 @@ export class PersistentEngine {
     // sessions are small (already reparsed from offset 0 on every change), so
     // parse the whole conversation and slice the window — identical math to the
     // claude-code path and to the legacy getConversationPage slice.
-    if (meta.provider === CODEX_CLI_PROVIDER || meta.provider === CURSOR_PROVIDER) {
+    if (
+      meta.provider === CODEX_CLI_PROVIDER ||
+      meta.provider === CURSOR_PROVIDER ||
+      meta.provider === COPILOT_PROVIDER
+    ) {
       const conversation =
         meta.provider === CODEX_CLI_PROVIDER
           ? await parseCodexConversation(filePath, meta.account)
-          : await parseCursorConversation(filePath, meta.account);
+          : meta.provider === CURSOR_PROVIDER
+            ? await parseCursorConversation(filePath, meta.account)
+            : await parseCopilotConversation(filePath, meta.account);
       if (!conversation) return null;
       const { messages } = conversation;
       const total = messages.length;
