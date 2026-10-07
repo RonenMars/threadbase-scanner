@@ -29,6 +29,7 @@ export {
   isCodexInjectedContext,
   parseCodexJsonlLine,
 } from "./providers/codex-cli";
+export { CopilotProvider, parseCopilotJsonlLine } from "./providers/copilot";
 export {
   CursorProvider,
   parseCursorJsonlLine,
@@ -42,6 +43,7 @@ export type {
 export {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderList,
   canonicalizeProviderName,

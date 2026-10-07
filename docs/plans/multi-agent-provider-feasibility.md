@@ -63,7 +63,7 @@ Difficulty scale for a Codex-shaped provider (discover + meta fold + full parse 
 | **Gemini CLI** | `~/.gemini/tmp/<project_hash>/chats/session-*.jsonl` (+ legacy `.json`) | Append-only JSONL (metadata line + messages) | Yes | Easy | Closest to Codex/Claude. Env override: `GEMINI_DIR`. |
 | **Grok CLI** | `~/.grok/sessions/<cwd-encoded>/<sessionId>/` | Dir per session: `summary.json` + `updates.jsonl` / `chat_history.jsonl` | Yes | Easy–Medium | Authoritative transcript is `updates.jsonl` (ACP stream). `GROK_HOME` override. Discovery is directory-based, not single-file — map one session dir → one `ConversationMeta` (`id` = canonical session path). |
 | **Amp** | `~/.local/share/amp/threads/T-{uuid}.json` | Whole-file JSON rewrite (`messages[]`, usage ledger) | Yes | Easy | No append-only Δ; always full reparse (same as Codex path). Prefer threads over `history.jsonl` (prompts only). |
-| **Copilot CLI** | `~/.copilot/session-state/<id>/events.jsonl` + `session-store.db` | JSONL events (+ Chronicle SQLite index) | Yes | Medium | Prefer `events.jsonl` for full transcript; Chronicle is a subset for listing. `COPILOT_HOME` override. |
+| **Copilot CLI** | `~/.copilot/session-state/<id>/events.jsonl` + `session-store.db` | JSONL events (+ Chronicle SQLite index) | Yes | Medium | Prefer `events.jsonl` for full transcript; Chronicle is a subset for listing. `COPILOT_HOME` override. Wire name **`copilot`**. Implemented in `src/providers/copilot.ts`. |
 | **Cursor Agent transcripts** | `~/.cursor/projects/<slug>/agent-transcripts/<runId>/<runId>.jsonl` | JSONL | Yes | Easy–Medium | Wire name **`cursor`** (not `cursor-agent`; `cursor-cli` is a legacy alias). Distinct from Composer chat. Implemented in `src/providers/cursor.ts`. |
 | **Cursor Composer** | `Cursor/User/globalStorage/state.vscdb` (+ workspace DBs) | SQLite `cursorDiskKV` / `ItemTable` (`composerData:…`, `bubbleId:…`) | Yes | Hard | Schema drift (≤2.6 per-workspace `allComposers` vs 3.0+ central `composer.composerHeaders`). Read-only; copy DB if locked. Not a natural fit for JSONL providers — needs a SQLite-backed provider variant. |
 | **OpenCode** | `~/.local/share/opencode/opencode.db` (+ legacy `storage/session|message|part`) | SQLite `session` / `message` / `part`; legacy JSON tree | Yes | Medium | Prefer SQLite when present; drop legacy to avoid double-count. macOS: `~/Library/Application Support/opencode/`. |
@@ -126,7 +126,7 @@ Ship one provider at a time, Codex template, persistent + in-memory tests:
 2. **Cursor agent-transcripts** (`cursor`) — not Composer. Shipped: `src/providers/cursor.ts`. Wire name matches streamer/mobile (`cursor-cli` alias).
 3. **Grok CLI** (`grok-cli`) — session-dir discovery
 4. **Amp** (`amp`)
-5. **Copilot CLI** (`copilot-cli`) — `events.jsonl`
+5. **Copilot CLI** (`copilot`) — `events.jsonl` (shipped)
 
 Each PR: provider module, fixtures, unit + `persistent-*-.test.ts`, wire discovery/sniff/getConversation/getPage, extend `ProviderName`.
 

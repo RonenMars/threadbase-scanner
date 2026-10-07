@@ -27,11 +27,13 @@ import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
+import { CopilotProvider, parseCopilotConversation } from "./providers/copilot";
 import { CursorProvider, parseCursorConversation } from "./providers/cursor";
 import { parseMetaWithProvider } from "./providers/parse";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderList,
   providerMatches,
@@ -574,7 +576,8 @@ export class ConversationScanner {
       if (
         this.persistent &&
         meta.provider !== CODEX_CLI_PROVIDER &&
-        meta.provider !== CURSOR_PROVIDER
+        meta.provider !== CURSOR_PROVIDER &&
+        meta.provider !== COPILOT_PROVIDER
       ) {
         const parsed = await parseConversationResumable(meta.filePath, meta.account);
         if (parsed) this.conversationLRU.set(cid, parsed);
@@ -585,7 +588,9 @@ export class ConversationScanner {
           ? await parseCodexConversation(meta.filePath, meta.account)
           : meta.provider === CURSOR_PROVIDER
             ? await parseCursorConversation(meta.filePath, meta.account)
-            : await parseConversation(meta.filePath, meta.account);
+            : meta.provider === COPILOT_PROVIDER
+              ? await parseCopilotConversation(meta.filePath, meta.account)
+              : await parseConversation(meta.filePath, meta.account);
       if (conversation) {
         this.conversationLRU.set(cid, { conversation });
       }
@@ -661,7 +666,9 @@ export class ConversationScanner {
         ? await parseCodexConversation(filePath, account ?? "default")
         : provider?.name === CURSOR_PROVIDER
           ? await parseCursorConversation(filePath, account ?? "default")
-          : await parseConversation(filePath, account ?? "default");
+          : provider?.name === COPILOT_PROVIDER
+            ? await parseCopilotConversation(filePath, account ?? "default")
+            : await parseConversation(filePath, account ?? "default");
     if (!conversation) return null;
 
     const { messages } = conversation;
@@ -1062,6 +1069,12 @@ export class ConversationScanner {
         work.push({ ...f, provider });
       }
     }
+    if (enabled.includes(COPILOT_PROVIDER) && (options.copilotRoots?.length ?? 0) > 0) {
+      const provider = new CopilotProvider();
+      for (const f of await provider.discover(options.copilotRoots as string[])) {
+        work.push({ ...f, provider });
+      }
+    }
     return work;
   }
 
@@ -1077,6 +1090,7 @@ export class ConversationScanner {
     if (providerMatches(previous?.provider, CURSOR_PROVIDER)) {
       return new CursorProvider();
     }
+    if (previous?.provider === COPILOT_PROVIDER) return new CopilotProvider();
     if (previous?.provider) return undefined; // known Threadbase
     let sample = "";
     try {
@@ -1095,6 +1109,8 @@ export class ConversationScanner {
     if (cursor.canParse(filePath, sample)) return cursor;
     const codex = new CodexCliProvider();
     if (codex.canParse(filePath, sample)) return codex;
+    const copilot = new CopilotProvider();
+    if (copilot.canParse(filePath, sample)) return copilot;
     return undefined;
   }
 

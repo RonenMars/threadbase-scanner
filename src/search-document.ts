@@ -1,4 +1,5 @@
 import { extractThinking } from "./parser";
+import { looksLikeCopilotEvent, parseCopilotJsonlLine } from "./providers/copilot";
 import { looksLikeCursorChatEntry, unwrapCursorUserText } from "./providers/cursor";
 import { cleanSystemTags } from "./tags";
 
@@ -100,7 +101,22 @@ export function extractSearchDelta(entry: Record<string, unknown>): SearchDocume
   if (looksLikeCursorChatEntry(entry)) {
     return extractCursorDelta(entry);
   }
+  if (looksLikeCopilotEvent(entry)) {
+    return extractCopilotDelta(entry);
+  }
   return extractClaudeDelta(entry);
+}
+
+// Copilot's message text and tool-call arguments. Reuses the provider's own
+// line mapping, so search indexes exactly what the conversation shows.
+function extractCopilotDelta(entry: Record<string, unknown>): SearchDocumentDelta {
+  const message = parseCopilotJsonlLine(JSON.stringify(entry));
+  if (!message) return emptySearchDocument();
+  const tools = (message.metadata?.toolUseBlocks ?? [])
+    .map((block) => capToolPayload(block.input))
+    .filter(Boolean)
+    .join(SEP);
+  return { text: message.text, thinking: "", tools };
 }
 
 function extractCursorDelta(entry: Record<string, unknown>): SearchDocumentDelta {

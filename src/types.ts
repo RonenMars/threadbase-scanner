@@ -39,7 +39,7 @@ export interface MessageSnapshot {
   timestamp: string;
 }
 
-export type ProviderName = "claude-code" | "codex-cli" | "cursor";
+export type ProviderName = "claude-code" | "codex-cli" | "cursor" | "copilot";
 
 export interface ConversationMeta {
   id: string;
@@ -110,8 +110,8 @@ export interface FileStatEntry {
 export interface ScanOptions {
   profiles?: Profile[];
   // Providers to scan. Defaults to ["claude-code"]. Including "codex-cli"
-  // requires codexRoots; including "cursor" requires cursorRoots. Neither
-  // glob $HOME by default. The live-PTY alias "cursor-cli" is accepted and
+  // requires codexRoots; including "cursor" requires cursorRoots; including
+  // "copilot" requires copilotRoots. None glob $HOME by default. The live-PTY alias "cursor-cli" is accepted and
   // stored as "cursor".
   providers?: Array<ProviderName | "cursor-cli">;
   // Absolute roots to discover Codex CLI history under (e.g. ~/.codex/sessions).
@@ -119,6 +119,9 @@ export interface ScanOptions {
   // Absolute roots to discover Cursor agent-transcripts under
   // (e.g. ~/.cursor/projects). Composer state.vscdb is out of scope.
   cursorRoots?: string[];
+  // Absolute roots to discover GitHub Copilot CLI sessions under
+  // (e.g. ~/.copilot/session-state). session-store.db is not read.
+  copilotRoots?: string[];
   tier?: string;
   tiers?: Record<string, ContentTier>;
   include?: Include;
