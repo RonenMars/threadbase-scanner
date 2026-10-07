@@ -282,6 +282,18 @@ export interface ConversationMessage {
   permissionMode?: string;
   hasImages?: boolean;
   attachment?: AttachmentSidecar;
+  // Claude Code's generated compaction summary ("This session is being
+  // continued…"), written as a user row the user never typed. Kept in the
+  // message list so message indexes don't move; consumers render it apart.
+  isCompactSummary?: boolean;
+  // The compact_boundary row that precedes the summary.
+  compaction?: CompactionInfo;
+}
+
+export interface CompactionInfo {
+  trigger?: string;
+  preTokens?: number;
+  postTokens?: number;
 }
 
 export interface Conversation {

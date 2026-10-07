@@ -105,6 +105,14 @@ export function reduceLine(
 
   const msg = entry.message as Record<string, unknown> | undefined;
 
+  // A compaction summary is generated text, not a prompt: keep it out of the
+  // counts, previews and snippets. It is still a message in the conversation
+  // reducer, so the page total must keep counting it.
+  if (entry.isCompactSummary === true) {
+    if (extractTextContent(msg?.content)) state.pageMessageCount++;
+    return;
+  }
+
   if (state.model === null && msg?.model) state.model = msg.model as string;
 
   if (type === "user" && !state.firstUserSeen) {
