@@ -151,7 +151,7 @@ function extractCursorSearchText(content: unknown): string {
 function extractClaudeDelta(entry: Record<string, unknown>): SearchDocumentDelta {
   const type = entry.type;
   if (type !== "user" && type !== "assistant") return emptySearchDocument();
-  if (entry.isMeta) return emptySearchDocument();
+  if (entry.isMeta || entry.isCompactSummary === true) return emptySearchDocument();
 
   const msg = entry.message as Record<string, unknown> | undefined;
   const content = msg?.content;

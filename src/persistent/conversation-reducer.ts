@@ -10,6 +10,7 @@ import {
 } from "../parser";
 import type {
   AttachmentSidecar,
+  CompactionInfo,
   ConversationMessage,
   MessageMetadata,
   MessageSender,
@@ -31,6 +32,9 @@ export interface ConvReducerState {
   pendingToolUses: Record<string, ToolUseBlock>;
   // teamName -> info, collected as lines are read and applied to messages.
   teamInfo: Record<string, TeamInfo>;
+  // The last compact_boundary row seen, held until its summary row (a few
+  // lines later) picks it up. Absent in checkpoints written before this field.
+  pendingCompaction?: CompactionInfo;
 }
 
 export function initialConvState(): ConvReducerState {
@@ -66,9 +70,22 @@ export function reduceConvLine(
     if (entry.lastPrompt && !state.lastPrompt) state.lastPrompt = entry.lastPrompt as string;
     return null;
   }
+  if (type === "system" && entry.subtype === "compact_boundary") {
+    const meta = (entry.compactMetadata ?? {}) as Record<string, unknown>;
+    state.pendingCompaction = {
+      trigger: typeof meta.trigger === "string" ? meta.trigger : undefined,
+      preTokens: typeof meta.preTokens === "number" ? meta.preTokens : undefined,
+      postTokens: typeof meta.postTokens === "number" ? meta.postTokens : undefined,
+    };
+    return null;
+  }
   // system (incl. turn_duration), file-history-snapshot, etc. produce no message.
   if (type !== "user" && type !== "assistant") return null;
   if (entry.isMeta) return null;
+
+  const isCompactSummary = type === "user" && entry.isCompactSummary === true;
+  const compaction = isCompactSummary ? state.pendingCompaction : undefined;
+  if (isCompactSummary) delete state.pendingCompaction;
 
   const msg = entry.message as Record<string, unknown> | undefined;
 
@@ -145,6 +162,8 @@ export function reduceConvLine(
     hasImages: hasImageBlocks(msg?.content) || undefined,
     attachment:
       entry.attachment !== undefined ? (entry.attachment as AttachmentSidecar) : undefined,
+    isCompactSummary: isCompactSummary || undefined,
+    compaction,
   };
 }
 
