@@ -37,7 +37,7 @@ async function foldTail(filePath: string, resume: ConversationResume) {
     resume.state,
     (message) => {
       messages.push(message);
-      if (message.text) textParts.push(message.text);
+      if (message.text && !message.isCompactSummary) textParts.push(message.text);
       return false; // never stop early — fold to EOF
     },
     (entry) => {
@@ -76,7 +76,9 @@ function assemble(
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
     sessionName:
       state.sessionName ||
-      deriveSessionNameFromFirstMessage(messages.find((m) => m.role === "user" && m.text) ?? null),
+      deriveSessionNameFromFirstMessage(
+        messages.find((m) => m.role === "user" && m.text && !m.isCompactSummary) ?? null,
+      ),
     messages,
     fullText,
     timestamp: state.latestTimestamp || new Date().toISOString(),

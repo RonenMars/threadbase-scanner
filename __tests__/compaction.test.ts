@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,32 @@ const FIXTURE = join(__dirname, "..", "__fixtures__", "compaction-conversation.j
 const TOTAL = 13;
 const AUTO = { trigger: "auto", preTokens: 266000, postTokens: 28000 };
 const MANUAL = { trigger: "manual", preTokens: 120000, postTokens: 9000 };
+
+// A session whose only prompt before the compaction was a slash command (which
+// is stripped to nothing), so the summary is the first user row with text.
+const SUMMARY_FIRST = [
+  {
+    type: "user",
+    uuid: "c1",
+    timestamp: "2026-01-01T09:00:00.000Z",
+    message: { role: "user", content: "<command-name>/review</command-name>" },
+  },
+  {
+    type: "user",
+    uuid: "s1",
+    timestamp: "2026-01-01T09:10:00.000Z",
+    isCompactSummary: true,
+    message: { role: "user", content: "This session is being continued about a walrus." },
+  },
+  {
+    type: "user",
+    uuid: "u1",
+    timestamp: "2026-01-01T09:11:00.000Z",
+    message: { role: "user", content: "Book the ferry" },
+  },
+]
+  .map((r) => JSON.stringify({ ...r, sessionId: "sess-summary-first", cwd: "/project" }))
+  .join("\n");
 
 function expectCompactionMessages(messages: ConversationMessage[]) {
   expect(messages.map((m) => m.uuid)).toEqual([
@@ -73,6 +99,20 @@ describe("compaction rows", () => {
     expect(meta?.lastMessage?.text).toBe("Here is the final schedule.");
   });
 
+  it("leaves the summaries out of the derived session name and the full text", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "compaction-name-"));
+    try {
+      const file = join(dir, "summary-first.jsonl");
+      writeFileSync(file, SUMMARY_FIRST);
+      const conv = await parseConversation(file, "default");
+      expect(conv?.sessionName).toBe("Book the ferry");
+      expect(conv?.fullText).toBe("Book the ferry");
+      expect(conv?.messages.map((m) => m.uuid)).toEqual(["s1", "u1"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("leaves the summaries out of the search document", () => {
     const rows = readFileSync(FIXTURE, "utf8")
       .split("\n")
@@ -83,7 +123,7 @@ describe("compaction rows", () => {
     for (const row of summaries) expect(isEmptyDelta(extractSearchDelta(row))).toBe(true);
   });
 
-  it("flags the summary in a subagent transcript, where the boundary row is isMeta", () => {
+  it("flags the summary in a subagent transcript, even if the boundary row is isMeta", () => {
     const state = initialConvState();
     const boundary = {
       type: "system",
@@ -153,6 +193,15 @@ describe("compaction rows", () => {
       const one = await scanner.getConversationPage(file, { beforeIndex: 11, limit: 1 });
       expect(one?.fromIndex).toBe(10);
       expect(one?.messages[0]).toMatchObject({ uuid: "s2", compaction: MANUAL });
+    });
+
+    it("leaves the summary out of the derived session name and the full text", async () => {
+      const first = join(dir, "projects", "proj", "summary-first.jsonl");
+      writeFileSync(first, `${SUMMARY_FIRST}\n`);
+      await scanner.scan({ profiles: [profile] });
+      const conv = await scanner.getConversation(first);
+      expect(conv?.sessionName).toBe("Book the ferry");
+      expect(conv?.fullText).toBe("Book the ferry");
     });
 
     it("does not find summary text in search", async () => {
