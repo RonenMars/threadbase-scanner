@@ -116,7 +116,7 @@ export async function parseConversation(
       const message = reduceConvLine(state, entry);
       if (message) {
         messages.push(message);
-        if (message.text) textParts.push(message.text);
+        if (message.text && !message.isCompactSummary) textParts.push(message.text);
       }
     }
   } catch (err) {
@@ -144,7 +144,9 @@ export async function parseConversation(
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
     sessionName:
       state.sessionName ||
-      deriveSessionNameFromFirstMessage(messages.find((m) => m.role === "user" && m.text) ?? null),
+      deriveSessionNameFromFirstMessage(
+        messages.find((m) => m.role === "user" && m.text && !m.isCompactSummary) ?? null,
+      ),
     messages,
     fullText: textParts.join(" "),
     timestamp: state.latestTimestamp || new Date().toISOString(),
