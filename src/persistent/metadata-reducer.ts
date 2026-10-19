@@ -7,6 +7,7 @@ import {
   isOnlyToolResultContent,
   isTeammateContent,
 } from "../parser";
+import { foldClaudeTitle, resolveClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
 import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
 
@@ -15,7 +16,7 @@ import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } fr
 // produces the ConversationMeta. Because the state is plain JSON, it can be
 // persisted in conversation_files.reducer_state and resumed when a file grows,
 // so an append only needs to fold the newly-read lines.
-export interface ReducerState {
+export interface ReducerState extends ClaudeTitleState {
   sessionId: string;
   sessionName: string;
   latestTimestamp: string;
@@ -50,6 +51,10 @@ export function initialReducerState(): ReducerState {
   return {
     sessionId: "",
     sessionName: "",
+    customTitle: "",
+    aiTitle: "",
+    slug: "",
+    firstUserTitle: "",
     latestTimestamp: "",
     cwd: "",
     teamName: "",
@@ -83,7 +88,7 @@ export function reduceLine(
 ): void {
   if (entry.cwd && !state.cwd) state.cwd = entry.cwd as string;
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
-  if (entry.slug && !state.sessionName) state.sessionName = entry.slug as string;
+  foldClaudeTitle(state, entry);
   if (entry.teamName && !state.teamName) state.teamName = entry.teamName as string;
   if (entry.agentId && !state.agentId) state.agentId = entry.agentId as string;
   if (entry.isSidechain === true) state.isSidechain = true;
@@ -95,7 +100,7 @@ export function reduceLine(
   const type = entry.type as string;
 
   if (type === "last-prompt") {
-    if (entry.lastPrompt && !state.lastPrompt) state.lastPrompt = entry.lastPrompt as string;
+    if (typeof entry.lastPrompt === "string" && entry.lastPrompt.trim()) state.lastPrompt = entry.lastPrompt.trim();
     return;
   }
 
@@ -121,6 +126,7 @@ export function reduceLine(
   }
 
   const content = extractTextContent(msg?.content);
+  if (type === "user" && !state.firstUserTitle && content && entry.isCompactSummary !== true && entry.toolUseResult == null) state.firstUserTitle = content;
   const hasToolUseResult = type === "user" && entry.toolUseResult != null;
   const isOnlyToolResult = hasToolUseResult && isOnlyToolResultContent(msg?.content);
 
@@ -189,7 +195,7 @@ export function finalizeMeta(
     filePath,
     provider: CLAUDE_CODE_PROVIDER,
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName: state.sessionName || deriveSessionNameFromFirstMessage(state.firstMessage),
+    sessionName: resolveClaudeTitle(state),
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,
