@@ -16,6 +16,13 @@ export function foldClaudeTitle(state: ClaudeTitleState, entry: Record<string, u
     state.customTitle = entry.customTitle.trim();
   if (entry.type === "ai-title" && typeof entry.aiTitle === "string" && entry.aiTitle.trim())
     state.aiTitle = entry.aiTitle.trim();
+  if (entry.type === "last-prompt" && typeof entry.lastPrompt === "string" && entry.lastPrompt.trim())
+    state.lastPrompt = entry.lastPrompt.trim();
+
+  if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary ||
+      entry.toolUseResult != null || state.firstUserTitle) return;
+  const message = entry.message as { content?: unknown } | undefined;
+  state.firstUserTitle = firstUserTitle("", message?.content);
 }
 
 // The picker renders the slash command from its command-name tag when there
@@ -23,7 +30,11 @@ export function foldClaudeTitle(state: ClaudeTitleState, entry: Record<string, u
 export function firstUserTitle(text: string, raw: unknown): string {
   const normalized = cleanSystemTags(text);
   if (normalized) return normalized;
-  const blocks = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw.map((part) => part?.text).filter((value): value is string => typeof value === "string") : [];
+  const blocks = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw.filter((part) => part?.type === "text").map((part) => part.text).filter((value): value is string => typeof value === "string") : [];
+  for (const block of blocks) {
+    const cleaned = cleanSystemTags(block);
+    if (cleaned) return cleaned;
+  }
   for (const block of blocks) {
     const command = block.match(/<command-name>\s*([^<]+)\s*<\/command-name>/)?.[1]?.trim();
     if (command) return command.startsWith("/") ? command : `/${command}`;
