@@ -3,7 +3,6 @@ import { getShortProjectName } from "../parser";
 import type { Conversation, ConversationMessage, TurnDuration } from "../types";
 import { resolveClaudeTitle } from "./claude-title";
 import { applyTeamInfo, type ConvReducerState, initialConvState } from "./conversation-reducer";
-import { deriveSessionNameFromFirstMessage } from "./metadata-reducer";
 import { streamMessages } from "./paged-reader";
 
 // A parsed conversation held in the scanner's LRU together with the resume
