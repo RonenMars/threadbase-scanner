@@ -8,7 +8,7 @@ import {
   isOnlyToolResultContent,
   parseTeammateMessageTag,
 } from "../parser";
-import { foldClaudeTitle, type ClaudeTitleState } from "./claude-title";
+import { firstUserTitle, foldClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import type {
   AttachmentSidecar,
   CompactionInfo,
@@ -100,7 +100,7 @@ export function reduceConvLine(
   const hasToolUseResult = type === "user" && entry.toolUseResult != null;
   const isToolResultOnly = hasToolUseResult && isOnlyToolResultContent(msg?.content);
   const content = extractTextContent(msg?.content);
-  if (type === "user" && !state.firstUserTitle && content && !isCompactSummary && !isToolResultOnly) state.firstUserTitle = content;
+  if (type === "user" && !state.firstUserTitle && !isCompactSummary && !isToolResultOnly) state.firstUserTitle = firstUserTitle(content, msg?.content);
   const thinking = type === "assistant" ? extractThinking(msg?.content) : null;
   const hasThinking = !!(thinking?.content || thinking?.signature);
 
