@@ -7,7 +7,6 @@ import {
   isOnlyToolResultContent,
   isTeammateContent,
 } from "../parser";
-import { foldClaudeTitle, resolveClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
 import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
 import {
