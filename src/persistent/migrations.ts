@@ -197,6 +197,14 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v10 → v11: rebuild Claude metadata and reducer checkpoints to pick up
+  // historical custom-title/ai-title records in unchanged transcripts.
+  if (current >= 1 && current < 11 && tableExists(db, "conversation_files")) {
+    db.exec(`UPDATE conversation_files SET last_indexed_offset = 0,
+      last_indexed_line = 0, reducer_state = NULL
+      WHERE id IN (SELECT file_id FROM conversations WHERE provider = 'claude-code')`);
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);
