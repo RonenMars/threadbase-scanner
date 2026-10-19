@@ -1,6 +1,7 @@
 import { basename } from "path";
 import { getShortProjectName } from "../parser";
 import type { Conversation, ConversationMessage, TurnDuration } from "../types";
+import { resolveClaudeTitle } from "./claude-title";
 import { applyTeamInfo, type ConvReducerState, initialConvState } from "./conversation-reducer";
 import { deriveSessionNameFromFirstMessage } from "./metadata-reducer";
 import { streamMessages } from "./paged-reader";
@@ -74,11 +75,7 @@ function assemble(
     projectPath: state.cwd,
     projectName: getShortProjectName(state.cwd),
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName:
-      state.sessionName ||
-      deriveSessionNameFromFirstMessage(
-        messages.find((m) => m.role === "user" && m.text && !m.isCompactSummary) ?? null,
-      ),
+    sessionName: resolveClaudeTitle(state),
     messages,
     fullText,
     timestamp: state.latestTimestamp || new Date().toISOString(),
