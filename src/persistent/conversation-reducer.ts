@@ -18,6 +18,7 @@ import type {
   TeamInfo,
   ToolUseBlock,
 } from "../types";
+import { type ClaudeTitleState, firstUserTitle, foldClaudeTitle } from "./claude-title";
 
 // Resumable, serializable state for the conversation line→message reduction.
 // Mirrors parseConversation()'s loop so a full reduce equals a streamed parse,
