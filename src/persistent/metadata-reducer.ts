@@ -7,7 +7,7 @@ import {
   isOnlyToolResultContent,
   isTeammateContent,
 } from "../parser";
-import { foldClaudeTitle, resolveClaudeTitle, type ClaudeTitleState } from "./claude-title";
+import { firstUserTitle, foldClaudeTitle, resolveClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
 import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
 
@@ -126,7 +126,7 @@ export function reduceLine(
   }
 
   const content = extractTextContent(msg?.content);
-  if (type === "user" && !state.firstUserTitle && content && entry.isCompactSummary !== true && entry.toolUseResult == null) state.firstUserTitle = content;
+  if (type === "user" && !state.firstUserTitle && entry.isCompactSummary !== true && entry.toolUseResult == null) state.firstUserTitle = firstUserTitle(content, msg?.content);
   const hasToolUseResult = type === "user" && entry.toolUseResult != null;
   const isOnlyToolResult = hasToolUseResult && isOnlyToolResultContent(msg?.content);
 
