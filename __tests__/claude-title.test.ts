@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  firstUserTitle,
-  foldClaudeTitle,
-  resolveClaudeTitle,
-  type ClaudeTitleState,
-} from "../src/persistent/claude-title";
-import {
   type ClaudeTitleState,
   firstUserTitle,
   foldClaudeTitle,
