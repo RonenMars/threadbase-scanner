@@ -1,15 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { firstUserTitle, foldClaudeTitle, resolveClaudeTitle, type ClaudeTitleState } from "../src/persistent/claude-title";
-import { initialReducerState, reduceLine } from "../src/persistent/metadata-reducer";
+import {
+  firstUserTitle,
+  foldClaudeTitle,
+  resolveClaudeTitle,
+  type ClaudeTitleState,
+} from "../src/persistent/claude-title";
+import {
+  type ClaudeTitleState,
+  firstUserTitle,
+  foldClaudeTitle,
+  resolveClaudeTitle,
+} from "../src/persistent/claude-title";
 import { initialConvState, reduceConvLine } from "../src/persistent/conversation-reducer";
+import { initialReducerState, reduceLine } from "../src/persistent/metadata-reducer";
 
 const state = (): ClaudeTitleState => ({
-  customTitle: "", aiTitle: "", lastPrompt: "", firstUserTitle: "", slug: "",
+  customTitle: "",
+  aiTitle: "",
+  lastPrompt: "",
+  firstUserTitle: "",
+  slug: "",
 });
 
 describe("Claude Code picker title precedence", () => {
   it("prefers custom title over AI title, last prompt, first message and slug", () => {
-    const s = { ...state(), slug: "green-bouncy-goose", firstUserTitle: "Fix it", lastPrompt: "continue" };
+    const s = {
+      ...state(),
+      slug: "green-bouncy-goose",
+      firstUserTitle: "Fix it",
+      lastPrompt: "continue",
+    };
     foldClaudeTitle(s, { type: "ai-title", aiTitle: "Fix authentication" });
     foldClaudeTitle(s, { type: "custom-title", customTitle: "AUTH-123" });
     foldClaudeTitle(s, { type: "ai-title", aiTitle: "Later AI title" });
@@ -61,7 +81,13 @@ describe("Claude Code picker title precedence", () => {
     const metadata = initialReducerState();
     const conversation = initialConvState();
     const rows = [
-      { type: "user", sessionId: "abc", slug: "blue-panda", message: { content: "First request" }, timestamp: "2026-10-18T12:00:00Z" },
+      {
+        type: "user",
+        sessionId: "abc",
+        slug: "blue-panda",
+        message: { content: "First request" },
+        timestamp: "2026-10-18T12:00:00Z",
+      },
       { type: "last-prompt", lastPrompt: "continue" },
       { type: "last-prompt", lastPrompt: "Another Claude session sent a message" },
       { type: "ai-title", aiTitle: "Initial summary" },
@@ -69,7 +95,9 @@ describe("Claude Code picker title precedence", () => {
       { type: "custom-title", customTitle: "Custom name" },
     ];
     for (const entry of rows) {
-      reduceLine(metadata, entry, { name: "test", previewMax: 200, snippetMax: 200 } as Parameters<typeof reduceLine>[2]);
+      reduceLine(metadata, entry, { name: "test", previewMax: 200, snippetMax: 200 } as Parameters<
+        typeof reduceLine
+      >[2]);
       reduceConvLine(conversation, entry);
     }
     expect(resolveClaudeTitle(metadata)).toBe("Custom name");
