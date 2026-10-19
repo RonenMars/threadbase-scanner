@@ -8,7 +8,6 @@ import {
   isOnlyToolResultContent,
   parseTeammateMessageTag,
 } from "../parser";
-import { foldClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import type {
   AttachmentSidecar,
   CompactionInfo,
