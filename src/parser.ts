@@ -2,6 +2,7 @@ import { createReadStream } from "fs";
 import { basename } from "path";
 import { createInterface } from "readline";
 import { getLogger } from "./logger";
+import { resolveClaudeTitle } from "./persistent/claude-title";
 import { applyTeamInfo, initialConvState, reduceConvLine } from "./persistent/conversation-reducer";
 import {
   deriveSessionNameFromFirstMessage,
@@ -142,11 +143,7 @@ export async function parseConversation(
     projectPath: state.cwd,
     projectName: getShortProjectName(state.cwd),
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName:
-      state.sessionName ||
-      deriveSessionNameFromFirstMessage(
-        messages.find((m) => m.role === "user" && m.text && !m.isCompactSummary) ?? null,
-      ),
+    sessionName: resolveClaudeTitle(state),
     messages,
     fullText: textParts.join(" "),
     timestamp: state.latestTimestamp || new Date().toISOString(),
