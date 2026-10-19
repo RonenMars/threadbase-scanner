@@ -26,7 +26,8 @@
 // v9: rename stored provider `cursor-cli` → `cursor`.
 // v10: reindex only — cleanSystemTags() now unwraps <pasted_content> instead of
 // leaving the tag as the title/preview.
-export const SCHEMA_VERSION = 10;
+// v11: reindex Claude titles using picker precedence.
+export const SCHEMA_VERSION = 11;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
