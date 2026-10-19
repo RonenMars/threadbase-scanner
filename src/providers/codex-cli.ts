@@ -5,7 +5,13 @@ import { basename } from "path";
 import { createInterface } from "readline";
 import { canonicalPath } from "../canonical-path";
 import { getLogger } from "../logger";
-import { deriveSessionNameFromFirstMessage } from "../persistent/metadata-reducer";
+import { codexNameSlotsFor } from "../name-stores";
+import {
+  applyNameCandidate,
+  isCodexInjectedContext,
+  type NameSlots,
+  resolveSessionName,
+} from "../session-name";
 import { cleanSystemTags } from "../tags";
 import type {
   ContentTier,
@@ -36,6 +42,7 @@ export interface CodexAccumulator {
   isSubagent: boolean;
   parentSessionUuid: string | null;
   firstUser: MessageSnapshot | null;
+  nameSlots: NameSlots;
   lastUser: MessageSnapshot | null;
   lastAssistant: MessageSnapshot | null;
   toolNames: string[];
@@ -108,6 +115,7 @@ export class CodexCliProvider implements ScannerProvider<CodexAccumulator> {
       isSubagent: false,
       parentSessionUuid: null,
       firstUser: null,
+      nameSlots: {},
       lastUser: null,
       lastAssistant: null,
       toolNames: [],
@@ -346,6 +354,7 @@ export function reduceCodexEntry(
   const snapshot: MessageSnapshot = { text: text.slice(0, 200), timestamp: ts };
   if (sender === "user") {
     if (!acc.firstUser) acc.firstUser = snapshot;
+    acc.nameSlots = applyNameCandidate(acc.nameSlots, "firstUserMessage", text, CODEX_CLI_PROVIDER);
     acc.lastUser = snapshot;
   } else {
     acc.lastAssistant = snapshot;
@@ -384,10 +393,9 @@ export function finalizeCodexMeta(
     kind,
     externalSessionId: acc.sessionId || undefined,
     sessionId,
-    // Mirrors the Claude reducer: a rollout carries no slug, so the opening turn
-    // is the only human-readable name source. Only useful because the injected
-    // AGENTS.md turn is skipped above — otherwise every title would be that blob.
-    sessionName: deriveSessionNameFromFirstMessage(acc.firstUser),
+    sessionName:
+      resolveSessionName({ ...acc.nameSlots, ...codexNameSlotsFor(filePath, acc.sessionId) })
+        .name ?? "",
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,
@@ -411,19 +419,7 @@ export function finalizeCodexMeta(
   };
 }
 
-/**
- * Boilerplate Codex injects as a `user`-role turn. Codex-generic only — prompts a
- * host passes as argv (Codex has no --system-prompt flag) also land as role:user,
- * but recognising those is the host's business, not the scanner's.
- */
-export function isCodexInjectedContext(text: string): boolean {
-  // AGENTS.md / instruction dumps prepended as the opening turn.
-  if (text.startsWith("# AGENTS.md") || text.includes("<INSTRUCTIONS>")) return true;
-  // Permissions / sandbox preamble, sometimes a giant user-role blob.
-  return (
-    text.startsWith("<permissions instructions>") || text.includes("Filesystem sandboxing defines")
-  );
-}
+export { isCodexInjectedContext };
 
 function getShortProjectName(fullPath: string): string {
   return fullPath.split("/").filter(Boolean).slice(-3).join("/");
@@ -466,6 +462,7 @@ export async function parseCodexConversation(
   let cwd = "";
   let latestTimestamp = "";
   let lastUserText = "";
+  let nameSlots: NameSlots = {};
 
   const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
   try {
@@ -493,7 +490,15 @@ export async function parseCodexConversation(
       // Tool and thinking messages carry no text; they must not blank lastPrompt.
       if (!message.text) continue;
       textParts.push(message.text);
-      if (message.role === "user") lastUserText = message.text;
+      if (message.role === "user") {
+        lastUserText = message.text;
+        nameSlots = applyNameCandidate(
+          nameSlots,
+          "firstUserMessage",
+          message.text,
+          CODEX_CLI_PROVIDER,
+        );
+      }
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseCodexConversation: read failed");
@@ -508,7 +513,8 @@ export async function parseCodexConversation(
     projectPath: cwd,
     projectName: getShortProjectName(cwd),
     sessionId: sessionId || basename(filePath, ".jsonl"),
-    sessionName: "",
+    sessionName:
+      resolveSessionName({ ...nameSlots, ...codexNameSlotsFor(filePath, sessionId) }).name ?? "",
     messages,
     fullText: textParts.join(" "),
     timestamp: latestTimestamp || new Date().toISOString(),

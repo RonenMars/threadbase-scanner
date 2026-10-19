@@ -26,7 +26,9 @@
 // v9: rename stored provider `cursor-cli` → `cursor`.
 // v10: reindex only — cleanSystemTags() now unwraps <pasted_content> instead of
 // leaving the tag as the title/preview.
-export const SCHEMA_VERSION = 10;
+// v11: name_slots (JSON) on conversations + a reindex, so every session name is
+// resolved from the same five slots (see session-name.ts).
+export const SCHEMA_VERSION = 11;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -73,6 +75,9 @@ CREATE TABLE IF NOT EXISTS conversations (
   external_session_id TEXT,
   session_id TEXT NOT NULL,
   session_name TEXT,
+  -- JSON NameSlots the name was resolved from; lets a side-store change
+  -- re-resolve the name without reparsing the transcript.
+  name_slots TEXT,
 
   project_path TEXT,
   project_name TEXT,

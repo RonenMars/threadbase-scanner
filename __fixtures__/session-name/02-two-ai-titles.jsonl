@@ -1,0 +1,4 @@
+{"type": "user", "uuid": "u43", "timestamp": "2026-02-01T10:43:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "Start here"}]}}
+{"type": "ai-title", "aiTitle": "First generated", "sessionId": "sess-name"}
+{"type": "assistant", "uuid": "a44", "timestamp": "2026-02-01T10:44:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "ai-title", "aiTitle": "Second generated", "sessionId": "sess-name"}

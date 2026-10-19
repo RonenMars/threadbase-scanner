@@ -118,7 +118,9 @@ agent-transcripts (`~/.cursor/projects/<slug>/agent-transcripts/`) alongside the
 default Threadbase/Claude history, normalizing all of them into the same
 `ConversationMeta` model. Extra providers are **opt-in**: pass `providers` and
 the matching `*Roots` (no home directory is scanned by default). Cursor Composer
-(`state.vscdb`) is a different store and is not indexed.
+(`state.vscdb`) is not indexed, but pass its absolute path as `cursorStateDb`
+to take IDE chat names from it (read-only, one key lookup per chat; unset by
+default, and `setCursorStateDb(undefined)` clears it).
 
 ```typescript
 import { homedir } from 'node:os'

@@ -6,7 +6,8 @@ import { basename, dirname, join, sep } from "path";
 import { createInterface } from "readline";
 import { canonicalPath } from "../canonical-path";
 import { getLogger } from "../logger";
-import { deriveSessionNameFromFirstMessage } from "../persistent/metadata-reducer";
+import { cursorNameSlotsFor } from "../name-stores";
+import { applyNameCandidate, type NameSlots, resolveSessionName } from "../session-name";
 import { cleanSystemTags } from "../tags";
 import type {
   ContentTier,
@@ -32,6 +33,7 @@ export interface CursorAccumulator {
   parentSessionUuid: string | null;
   subagentId: string | null;
   firstUser: MessageSnapshot | null;
+  nameSlots: NameSlots;
   lastUser: MessageSnapshot | null;
   lastAssistant: MessageSnapshot | null;
   isImportedFromClaude: boolean;
@@ -108,6 +110,7 @@ export class CursorProvider implements ScannerProvider<CursorAccumulator> {
       parentSessionUuid: null,
       subagentId: null,
       firstUser: null,
+      nameSlots: {},
       lastUser: null,
       lastAssistant: null,
       isImportedFromClaude: false,
@@ -210,6 +213,18 @@ function noteImportProvenance(
   if (/imported from codex/i.test(text) || /<imported_from_codex>/i.test(text)) {
     acc.isImportedFromCodex = true;
   }
+}
+
+// Only <user_query> text can name a session: a user turn without one is
+// skipped, so Cursor's own wrapper text never becomes a title.
+function cursorUserQuery(content: unknown): string | undefined {
+  const texts = typeof content === "string" ? [content] : Array.isArray(content) ? content : [];
+  for (const item of texts) {
+    const text = typeof item === "string" ? item : (item as { text?: unknown })?.text;
+    const query = typeof text === "string" ? text.match(USER_QUERY_RE) : null;
+    if (query) return query[1];
+  }
+  return undefined;
 }
 
 export function unwrapCursorUserText(text: string): string {
@@ -399,6 +414,14 @@ export function reduceCursorEntry(
     collectCursorToolNames(content, acc.toolNames);
     const text = textHint;
     if (!text) return;
+    if (entry.role === "user") {
+      acc.nameSlots = applyNameCandidate(
+        acc.nameSlots,
+        "firstUserMessage",
+        cursorUserQuery(content),
+        CURSOR_PROVIDER,
+      );
+    }
     foldCursorMessage(acc, entry.role as MessageSender, text, firstTimestampHint(content), tier);
     return;
   }
@@ -441,7 +464,9 @@ export function finalizeCursorMeta(
     kind,
     externalSessionId: sessionId,
     sessionId,
-    sessionName: deriveSessionNameFromFirstMessage(acc.firstUser),
+    sessionName:
+      resolveSessionName({ ...acc.nameSlots, ...cursorNameSlotsFor(filePath, sessionId) }).name ??
+      "",
     projectPath,
     projectName,
     account,
@@ -541,6 +566,15 @@ function fileMtimeIso(filePath: string): string {
   }
 }
 
+function cursorLineContent(line: string): unknown {
+  try {
+    const entry = JSON.parse(line) as { message?: { content?: unknown }; content?: unknown };
+    return entry.message?.content ?? entry.content;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function parseCursorConversation(
   filePath: string,
   account: string,
@@ -550,6 +584,7 @@ export async function parseCursorConversation(
   const textParts: string[] = [];
   let latestTimestamp = "";
   let lastUserText = "";
+  let nameSlots: NameSlots = {};
 
   const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
   try {
@@ -563,7 +598,17 @@ export async function parseCursorConversation(
       // Tool-only messages carry no text; they must not blank lastPrompt.
       if (!message.text) continue;
       textParts.push(message.text);
-      if (message.role === "user") lastUserText = message.text;
+      if (message.role === "user") {
+        lastUserText = message.text;
+        if (nameSlots.firstUserMessage === undefined) {
+          nameSlots = applyNameCandidate(
+            nameSlots,
+            "firstUserMessage",
+            cursorUserQuery(cursorLineContent(line)),
+            CURSOR_PROVIDER,
+          );
+        }
+      }
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseCursorConversation: read failed");
@@ -580,7 +625,8 @@ export async function parseCursorConversation(
     projectPath,
     projectName,
     sessionId,
-    sessionName: "",
+    sessionName:
+      resolveSessionName({ ...nameSlots, ...cursorNameSlotsFor(filePath, sessionId) }).name ?? "",
     messages,
     fullText: textParts.join(" "),
     timestamp: latestTimestamp || fileMtimeIso(filePath),

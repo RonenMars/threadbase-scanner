@@ -10,12 +10,13 @@ describe("parseMeta", () => {
     const meta = await parseMeta(join(FIXTURES, "valid-conversation.jsonl"), "default", TIER_STD);
     expect(meta).not.toBeNull();
     expect(meta?.sessionId).toBe("sess-abc");
-    expect(meta?.sessionName).toBe("my-session");
+    // slug is the last fallback: the first user message outranks it.
+    expect(meta?.sessionName).toBe("Hello, can you help me?");
   });
 
-  it("falls back sessionName to the first user message's first line when no slug", async () => {
+  it("falls back sessionName to the full first user message when no slug", async () => {
     const meta = await parseMeta(join(FIXTURES, "no-slug-conversation.jsonl"), "default", TIER_STD);
-    expect(meta?.sessionName).toBe("Fix the failing login test");
+    expect(meta?.sessionName).toBe("Fix the failing login test\nand make sure CI is green");
     expect(meta?.projectPath).toBe("/home/user/project");
   });
 
@@ -109,7 +110,7 @@ describe("parseConversation", () => {
 
   it("falls back sessionName to the first user message when no slug", async () => {
     const conv = await parseConversation(join(FIXTURES, "no-slug-conversation.jsonl"), "default");
-    expect(conv?.sessionName).toBe("Fix the failing login test");
+    expect(conv?.sessionName).toBe("Fix the failing login test\nand make sure CI is green");
   });
 });
 

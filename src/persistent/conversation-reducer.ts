@@ -8,6 +8,7 @@ import {
   isOnlyToolResultContent,
   parseTeammateMessageTag,
 } from "../parser";
+import type { NameSlots } from "../session-name";
 import type {
   AttachmentSidecar,
   CompactionInfo,
@@ -17,6 +18,7 @@ import type {
   TeamInfo,
   ToolUseBlock,
 } from "../types";
+import { applyClaudeNameEntry } from "./claude-name-slots";
 
 // Resumable, serializable state for the conversation line→message reduction.
 // Mirrors parseConversation()'s loop so a full reduce equals a streamed parse,
@@ -25,7 +27,7 @@ import type {
 export interface ConvReducerState {
   cwd: string;
   sessionId: string;
-  sessionName: string;
+  nameSlots: NameSlots;
   latestTimestamp: string;
   lastPrompt: string;
   // id -> tool_use block, so a later tool_result line resolves its tool type.
@@ -41,7 +43,7 @@ export function initialConvState(): ConvReducerState {
   return {
     cwd: "",
     sessionId: "",
-    sessionName: "",
+    nameSlots: {},
     latestTimestamp: "",
     lastPrompt: "",
     pendingToolUses: {},
@@ -58,7 +60,7 @@ export function reduceConvLine(
 ): ConversationMessage | null {
   if (entry.cwd && !state.cwd) state.cwd = entry.cwd as string;
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
-  if (entry.slug && !state.sessionName) state.sessionName = entry.slug as string;
+  state.nameSlots = applyClaudeNameEntry(state.nameSlots, entry);
   if (entry.timestamp) {
     const ts = entry.timestamp as string;
     if (!state.latestTimestamp || ts > state.latestTimestamp) state.latestTimestamp = ts;

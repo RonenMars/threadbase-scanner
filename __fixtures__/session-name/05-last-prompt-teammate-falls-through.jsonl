@@ -1,0 +1,2 @@
+{"type": "user", "uuid": "u47", "timestamp": "2026-02-01T10:47:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "Fix the login bug"}]}}
+{"type": "last-prompt", "lastPrompt": "Another Claude session sent a message: <teammate-message teammate_id=\"x\">hi</teammate-message>", "sessionId": "sess-name"}

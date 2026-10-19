@@ -226,6 +226,8 @@ describe("schema v5", () => {
     // forward index is capped to the tier's snippetMax because it is resident
     // memory, so a term in the dropped head is a persistent-only hit.
     const bigFile = () =>
+      // A short first message keeps the (now full-length) session name out of the way.
+      userText("sa", "2025-12-31T00:00:00.000Z", "opening question") +
       userText("sa", "2026-01-01T00:00:00.000Z", `HEADONLYNEEDLE ${"filler words ".repeat(2000)}`) +
       userText("sa", "2026-01-02T00:00:00.000Z", "TAILNEEDLE at the end");
 

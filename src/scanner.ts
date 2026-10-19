@@ -17,6 +17,7 @@ import {
 import { readGitBranch } from "./git";
 import { SearchIndexer } from "./indexer";
 import { getLogger } from "./logger";
+import { setCursorStateDb } from "./name-stores";
 import { parseConversation, parseMeta } from "./parser";
 import {
   type CachedConversation,
@@ -257,6 +258,7 @@ export class ConversationScanner {
   }
 
   private async runScan(options: ScanOptions): Promise<ScanResult> {
+    if (options.cursorStateDb !== undefined) setCursorStateDb(options.cursorStateDb);
     const profiles = await this.resolveProfiles(options.profiles);
     const activeProfiles = profiles.filter((p) => p.enabled && p.scanHistory !== false);
     this.lastTier = resolveTier(options.tier ?? "standard", options.tiers);

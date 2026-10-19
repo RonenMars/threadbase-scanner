@@ -2,6 +2,7 @@ import { statSync } from "fs";
 import { canonicalPath } from "../canonical-path";
 import { readGitBranch } from "../git";
 import { getLogger } from "../logger";
+import { nameStoreSlotsFor } from "../name-stores";
 import { getProjectsDir } from "../profiles";
 import { CodexCliProvider, parseCodexConversation } from "../providers/codex-cli";
 import { CopilotProvider, parseCopilotConversation } from "../providers/copilot";
@@ -16,6 +17,7 @@ import {
   type ScannerProvider,
 } from "../providers/provider";
 import { appendSearchDelta, emptySearchDocument, extractSearchDelta } from "../search-document";
+import type { NameSlots } from "../session-name";
 import { resolveTier } from "../tiers";
 import type {
   ConversationMeta,
@@ -233,7 +235,9 @@ export class PersistentEngine {
     // spelling, whichever separator style the caller passed in.
     const filePath = canonicalPath(rawFilePath);
     const existing = this.files.getByPath(filePath);
-    const { change, stat } = classify(filePath, existing);
+    const classified = classify(filePath, existing);
+    const stat = classified.stat;
+    let change = classified.change;
 
     if (change === "vanished" || !stat) {
       // File gone between discovery and indexing — treat as deleted.
@@ -243,7 +247,20 @@ export class PersistentEngine {
     // Unchanged: serve the persisted summary without re-reading (unless a
     // caller forces a re-parse, e.g. refreshFile after a same-size edit).
     if (change === "unchanged" && !force) {
-      return { meta: this.conversations.getBySourcePath(filePath), change };
+      const meta = this.conversations.getBySourcePath(filePath);
+      // Codex/Cursor/Copilot names also come from stores beside the transcript,
+      // which can change while the transcript does not. Re-reading them is cheap
+      // (cached, or one small file) next to a reparse, which only runs on a diff.
+      // ponytail: one read per provider file per pass; stat-gate it if a root
+      // ever holds thousands of Cursor chats.
+      const sideStoresMoved =
+        provider &&
+        provider.name !== CLAUDE_CODE_PROVIDER &&
+        meta &&
+        JSON.stringify(nameStoreSlotsFor(provider.name, filePath, meta.sessionId)) !==
+          existing?.reducer_state;
+      if (!sideStoresMoved) return { meta, change };
+      change = "reindex";
     }
 
     // ponytail: Codex reparses from offset 0 on every change rather than
@@ -308,7 +325,7 @@ export class PersistentEngine {
     const searchDoc = appendSearchDelta(base, searchDelta);
 
     const upsert = this.db.transaction(() => {
-      this.conversations.upsert(fileId, meta, state.pageMessageCount);
+      this.conversations.upsert(fileId, meta, state.pageMessageCount, state.nameSlots);
       // Re-tokenizing ~128 KB is the expensive part of an append; skip it when
       // the row (body + metadata) would come out identical.
       if (!this.fts.isCurrent(fileId, meta, searchDoc)) {
@@ -359,7 +376,7 @@ export class PersistentEngine {
   // provider's reducer/finalize, then the same upsert + FTS write + cursor bump
   // the Threadbase path uses. The cursor records size/mtime (and offset = size)
   // so the next pass classifies an unchanged file as "unchanged" and skips it;
-  // any change reparses from 0 again. No reducer_state is persisted.
+  // any change reparses from 0 again. reducer_state holds the side-store name slots, not a fold.
   private async indexFileWithProvider(
     provider: ScannerProvider,
     filePath: string,
@@ -373,9 +390,19 @@ export class PersistentEngine {
     // Codex always reparses from byte 0, so the search document is rebuilt whole
     // from the same pass rather than tail-extended.
     let searchDoc = emptySearchDocument();
-    const meta = await parseMetaWithProvider(provider, filePath, account, tier, (entry) => {
-      searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
-    });
+    let transcriptSlots: NameSlots = {};
+    const meta = await parseMetaWithProvider(
+      provider,
+      filePath,
+      account,
+      tier,
+      (entry) => {
+        searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
+      },
+      (acc) => {
+        transcriptSlots = (acc as { nameSlots?: NameSlots }).nameSlots ?? {};
+      },
+    );
     if (!meta) {
       this.markDeleted(filePath);
       return null;
@@ -386,10 +413,14 @@ export class PersistentEngine {
       meta.gitBranch = resolveGitBranch(meta.projectPath);
     }
 
+    const sideSlots = nameStoreSlotsFor(provider.name, filePath, meta.sessionId);
     const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
     const fileId = this.files.ensure(filePath, account);
     const upsert = this.db.transaction(() => {
-      this.conversations.upsert(fileId, meta, meta.messageCount);
+      this.conversations.upsert(fileId, meta, meta.messageCount, {
+        ...transcriptSlots,
+        ...sideSlots,
+      });
       if (!this.fts.isCurrent(fileId, meta, searchDoc)) {
         this.fts.upsert(fileId, meta, searchDoc);
       }
@@ -401,7 +432,9 @@ export class PersistentEngine {
         // can classify it "unchanged"); no resumable reducer state is kept.
         offset: stat.size,
         line: 0,
-        reducerState: null,
+        // Not resumable state: the side-store name slots this parse used, so the
+        // next pass can tell when they moved (see indexFile).
+        reducerState: JSON.stringify(sideSlots),
         fingerprint: fp,
         status: "active",
       });
