@@ -4,11 +4,7 @@ import { createInterface } from "readline";
 import { getLogger } from "./logger";
 import { resolveClaudeTitle } from "./persistent/claude-title";
 import { applyTeamInfo, initialConvState, reduceConvLine } from "./persistent/conversation-reducer";
-import {
-  finalizeMeta,
-  initialReducerState,
-  reduceLine,
-} from "./persistent/metadata-reducer";
+import { finalizeMeta, initialReducerState, reduceLine } from "./persistent/metadata-reducer";
 import { cleanSystemTags } from "./tags";
 import type {
   ContentTier,
