@@ -8,6 +8,7 @@ import {
   isOnlyToolResultContent,
   parseTeammateMessageTag,
 } from "../parser";
+import { foldClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import type {
   AttachmentSidecar,
   CompactionInfo,
@@ -22,7 +23,7 @@ import type {
 // Mirrors parseConversation()'s loop so a full reduce equals a streamed parse,
 // and so a bounded page read can resume an *equivalent* parse from a checkpoint
 // by restoring the cross-line state (pending tool_use blocks + team info).
-export interface ConvReducerState {
+export interface ConvReducerState extends ClaudeTitleState {
   cwd: string;
   sessionId: string;
   sessionName: string;
@@ -42,6 +43,10 @@ export function initialConvState(): ConvReducerState {
     cwd: "",
     sessionId: "",
     sessionName: "",
+    customTitle: "",
+    aiTitle: "",
+    slug: "",
+    firstUserTitle: "",
     latestTimestamp: "",
     lastPrompt: "",
     pendingToolUses: {},
@@ -58,7 +63,7 @@ export function reduceConvLine(
 ): ConversationMessage | null {
   if (entry.cwd && !state.cwd) state.cwd = entry.cwd as string;
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
-  if (entry.slug && !state.sessionName) state.sessionName = entry.slug as string;
+  foldClaudeTitle(state, entry);
   if (entry.timestamp) {
     const ts = entry.timestamp as string;
     if (!state.latestTimestamp || ts > state.latestTimestamp) state.latestTimestamp = ts;
@@ -67,7 +72,7 @@ export function reduceConvLine(
   const type = entry.type as string;
 
   if (type === "last-prompt") {
-    if (entry.lastPrompt && !state.lastPrompt) state.lastPrompt = entry.lastPrompt as string;
+    if (typeof entry.lastPrompt === "string" && entry.lastPrompt.trim()) state.lastPrompt = entry.lastPrompt.trim();
     return null;
   }
   if (type === "system" && entry.subtype === "compact_boundary") {
@@ -95,6 +100,7 @@ export function reduceConvLine(
   const hasToolUseResult = type === "user" && entry.toolUseResult != null;
   const isToolResultOnly = hasToolUseResult && isOnlyToolResultContent(msg?.content);
   const content = extractTextContent(msg?.content);
+  if (type === "user" && !state.firstUserTitle && content && !isCompactSummary && !isToolResultOnly) state.firstUserTitle = content;
   const thinking = type === "assistant" ? extractThinking(msg?.content) : null;
   const hasThinking = !!(thinking?.content || thinking?.signature);
 
