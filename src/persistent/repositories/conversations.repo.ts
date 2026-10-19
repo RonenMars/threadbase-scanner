@@ -1,6 +1,7 @@
 import type { Database } from "better-sqlite3";
 import { canonicalPath } from "../../canonical-path";
 import { CLAUDE_CODE_PROVIDER } from "../../providers/provider";
+import type { NameSlots } from "../../session-name";
 import type { ConversationMeta, MessageSender, ProviderName } from "../../types";
 
 export interface ConversationRow {
@@ -87,7 +88,12 @@ export class ConversationsRepo {
 
   // Upsert by file_id (1 file = 1 conversation). Keyed on the unique file_id so
   // a re-index overwrites the prior summary in place.
-  upsert(fileId: number, meta: ConversationMeta, pageMessageCount = meta.messageCount): void {
+  upsert(
+    fileId: number,
+    meta: ConversationMeta,
+    pageMessageCount = meta.messageCount,
+    nameSlots?: NameSlots,
+  ): void {
     this.db
       .prepare(
         `INSERT INTO conversations (
@@ -99,7 +105,7 @@ export class ConversationsRepo {
            model, is_subagent, parent_session_id, subagent_id, parent_session_uuid,
            is_teammate, team_name, tool_names_json,
            last_prompt, is_imported_from_claude, is_imported_from_codex,
-           is_imported_from_cursor, status, updated_at
+           is_imported_from_cursor, name_slots, status, updated_at
          ) VALUES (
            @file_id, @source_path, @provider, @kind, @external_session_id,
            @session_id, @session_name, @project_path, @project_name,
@@ -111,7 +117,7 @@ export class ConversationsRepo {
            @model, @is_subagent, @parent_session_id, @subagent_id, @parent_session_uuid,
            @is_teammate, @team_name, @tool_names_json,
            @last_prompt, @is_imported_from_claude, @is_imported_from_codex,
-           @is_imported_from_cursor, 'active', CURRENT_TIMESTAMP
+           @is_imported_from_cursor, @name_slots, 'active', CURRENT_TIMESTAMP
          )
          ON CONFLICT(file_id) DO UPDATE SET
            source_path = excluded.source_path,
@@ -146,6 +152,7 @@ export class ConversationsRepo {
            is_imported_from_claude = excluded.is_imported_from_claude,
            is_imported_from_codex = excluded.is_imported_from_codex,
            is_imported_from_cursor = excluded.is_imported_from_cursor,
+           name_slots = excluded.name_slots,
            status = 'active',
            index_seq = (SELECT COALESCE(MAX(index_seq), 0) + 1 FROM conversations),
            updated_at = CURRENT_TIMESTAMP`,
@@ -187,6 +194,7 @@ export class ConversationsRepo {
         is_imported_from_claude: meta.isImportedFromClaude ? 1 : 0,
         is_imported_from_codex: meta.isImportedFromCodex ? 1 : 0,
         is_imported_from_cursor: meta.isImportedFromCursor ? 1 : 0,
+        name_slots: nameSlots ? JSON.stringify(nameSlots) : null,
       });
   }
 

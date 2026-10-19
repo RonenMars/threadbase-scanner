@@ -197,6 +197,36 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v10 → v11: name_slots column + a reindex. Rows indexed before it carry no
+  // slots, and a finished transcript is never appended to, so only a reparse
+  // from offset 0 (classify() returns "reindex" for it) can fill them. No JSONL
+  // is read here: the re-parse happens in the next indexAll.
+  //
+  // Checkpoints go too: they snapshot the conversation reducer state, and one
+  // written before v11 has no nameSlots, so a paged read restoring it before the
+  // reindex reaches that file would fail. They are rebuilt lazily on page access.
+  if (current >= 1 && current < 11 && tableExists(db, "conversations")) {
+    if (tableExists(db, "message_checkpoints")) db.exec("DELETE FROM message_checkpoints");
+    if (!hasColumn(db, "conversations", "name_slots")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN name_slots TEXT");
+    }
+    if (tableExists(db, "conversation_files")) {
+      const assignments: string[] = [];
+      if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+        assignments.push("last_indexed_offset = 0");
+      }
+      if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+        assignments.push("last_indexed_line = 0");
+      }
+      if (hasColumn(db, "conversation_files", "reducer_state")) {
+        assignments.push("reducer_state = NULL");
+      }
+      if (assignments.length > 0) {
+        db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+      }
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);

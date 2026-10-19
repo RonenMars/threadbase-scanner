@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { monitorEventLoopDelay } from "perf_hooks";
@@ -627,5 +627,87 @@ describe("incremental refresh (byte-offset checkpointing)", () => {
       }
       await scanner.close();
     });
+  });
+  describe("session name slots", () => {
+    const entry = (e: Record<string, unknown>) =>
+      `${JSON.stringify({ sessionId: "sess-live", ...e })}\n`;
+    const user = (text: string) =>
+      entry({
+        type: "user",
+        uuid: "u1",
+        timestamp: "2026-02-01T10:00:00.000Z",
+        cwd: "/home/live",
+        message: { role: "user", content: [{ type: "text", text }] },
+      });
+
+    function stored(): { session_name: string | null; name_slots: string | null } {
+      const db = openDatabase(dbPath);
+      const row = db
+        .prepare("SELECT session_name, name_slots FROM conversations WHERE source_path = ?")
+        .get(file) as { session_name: string | null; name_slots: string | null };
+      db.close();
+      return row;
+    }
+
+    async function indexed(first: string): Promise<ConversationScanner> {
+      writeFileSync(file, first);
+      const scanner = new ConversationScanner({ persistent: { dbPath } });
+      await scanner.scan({ profiles: [profile()] });
+      return scanner;
+    }
+
+    it("an appended ai-title outranks the first user message", async () => {
+      const scanner = await indexed(user("Fix the login bug"));
+      expect(stored().session_name).toBe("Fix the login bug");
+
+      fs.appendFileSync(file, entry({ type: "ai-title", aiTitle: "Login bug fix" }));
+      await scanner.refreshFile(file);
+
+      expect(stored().session_name).toBe("Login bug fix");
+      expect(JSON.parse(stored().name_slots as string)).toEqual({
+        firstUserMessage: "Fix the login bug",
+        toolTitle: "Login bug fix",
+      });
+      await scanner.close();
+    });
+
+    it("a custom-title appended before a later ai-title still wins", async () => {
+      const scanner = await indexed(user("Fix the login bug"));
+      fs.appendFileSync(file, entry({ type: "custom-title", customTitle: "My title" }));
+      await scanner.refreshFile(file);
+      fs.appendFileSync(file, entry({ type: "ai-title", aiTitle: "Generated" }));
+      await scanner.refreshFile(file);
+
+      expect(stored().session_name).toBe("My title");
+      await scanner.close();
+    });
+
+    it("a full scan and a line-by-line incremental scan agree on every fixture", async () => {
+      const dirFixtures = join(__dirname, "..", "__fixtures__", "session-name");
+      for (const name of readdirSync(dirFixtures)) {
+        const lines = readFileSync(join(dirFixtures, name), "utf8").split("\n").filter(Boolean);
+
+        // Full: the whole file in one shot.
+        rmSync(dbPath, { force: true });
+        writeFileSync(file, `${lines.join("\n")}\n`);
+        const full = new ConversationScanner({ persistent: { dbPath } });
+        await full.scan({ profiles: [profile()] });
+        const expected = stored();
+        await full.close();
+
+        // Incremental: one line at a time, refreshing after each append.
+        rmSync(dbPath, { force: true });
+        writeFileSync(file, `${lines[0]}\n`);
+        const inc = new ConversationScanner({ persistent: { dbPath } });
+        await inc.scan({ profiles: [profile()] });
+        for (const line of lines.slice(1)) {
+          fs.appendFileSync(file, `${line}\n`);
+          await inc.refreshFile(file);
+        }
+        expect({ name, ...stored() }).toEqual({ name, ...expected });
+        expect(expected.name_slots).not.toBeNull();
+        await inc.close();
+      }
+    }, 60_000);
   });
 });

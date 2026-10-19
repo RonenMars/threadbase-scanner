@@ -1,0 +1,2 @@
+{"type": "user", "uuid": "u54", "timestamp": "2026-02-01T10:54:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "<command-name>/model</command-name>"}]}, "slug": "brave-otter"}
+{"type": "assistant", "uuid": "a55", "timestamp": "2026-02-01T10:55:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "Switched."}]}}

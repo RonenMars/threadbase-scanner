@@ -1,0 +1,44 @@
+{"type": "user", "uuid": "u1", "timestamp": "2026-02-01T10:01:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "Start here"}]}}
+{"type": "custom-title", "customTitle": "My custom title", "sessionId": "sess-name"}
+{"type": "assistant", "uuid": "a2", "timestamp": "2026-02-01T10:02:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a3", "timestamp": "2026-02-01T10:03:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a4", "timestamp": "2026-02-01T10:04:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a5", "timestamp": "2026-02-01T10:05:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a6", "timestamp": "2026-02-01T10:06:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a7", "timestamp": "2026-02-01T10:07:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a8", "timestamp": "2026-02-01T10:08:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a9", "timestamp": "2026-02-01T10:09:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a10", "timestamp": "2026-02-01T10:10:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a11", "timestamp": "2026-02-01T10:11:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a12", "timestamp": "2026-02-01T10:12:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a13", "timestamp": "2026-02-01T10:13:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a14", "timestamp": "2026-02-01T10:14:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a15", "timestamp": "2026-02-01T10:15:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a16", "timestamp": "2026-02-01T10:16:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a17", "timestamp": "2026-02-01T10:17:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a18", "timestamp": "2026-02-01T10:18:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a19", "timestamp": "2026-02-01T10:19:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a20", "timestamp": "2026-02-01T10:20:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a21", "timestamp": "2026-02-01T10:21:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a22", "timestamp": "2026-02-01T10:22:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a23", "timestamp": "2026-02-01T10:23:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a24", "timestamp": "2026-02-01T10:24:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a25", "timestamp": "2026-02-01T10:25:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a26", "timestamp": "2026-02-01T10:26:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a27", "timestamp": "2026-02-01T10:27:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a28", "timestamp": "2026-02-01T10:28:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a29", "timestamp": "2026-02-01T10:29:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a30", "timestamp": "2026-02-01T10:30:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a31", "timestamp": "2026-02-01T10:31:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a32", "timestamp": "2026-02-01T10:32:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a33", "timestamp": "2026-02-01T10:33:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a34", "timestamp": "2026-02-01T10:34:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a35", "timestamp": "2026-02-01T10:35:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a36", "timestamp": "2026-02-01T10:36:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a37", "timestamp": "2026-02-01T10:37:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a38", "timestamp": "2026-02-01T10:38:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a39", "timestamp": "2026-02-01T10:39:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a40", "timestamp": "2026-02-01T10:40:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a41", "timestamp": "2026-02-01T10:41:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "assistant", "uuid": "a42", "timestamp": "2026-02-01T10:42:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+{"type": "ai-title", "aiTitle": "Generated title", "sessionId": "sess-name"}

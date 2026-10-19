@@ -1,0 +1,4 @@
+{"type": "user", "uuid": "u45", "timestamp": "2026-02-01T10:45:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "Start here"}]}}
+{"type": "ai-title", "aiTitle": "First generated", "sessionId": "sess-name"}
+{"type": "custom-title", "customTitle": "My custom title", "sessionId": "sess-name"}
+{"type": "ai-title", "aiTitle": "Later generated", "sessionId": "sess-name"}

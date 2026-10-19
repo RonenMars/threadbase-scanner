@@ -8,7 +8,9 @@ import {
   isTeammateContent,
 } from "../parser";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
+import { type NameSlots, resolveSessionName } from "../session-name";
 import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
+import { applyClaudeNameEntry } from "./claude-name-slots";
 
 // Serializable fold state for incremental metadata indexing. parseMeta()'s
 // per-line loop is expressed as reduceLine(state, entry); finalizeMeta(state)
@@ -17,7 +19,7 @@ import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } fr
 // so an append only needs to fold the newly-read lines.
 export interface ReducerState {
   sessionId: string;
-  sessionName: string;
+  nameSlots: NameSlots;
   latestTimestamp: string;
   cwd: string;
   teamName: string;
@@ -49,7 +51,7 @@ export interface ReducerState {
 export function initialReducerState(): ReducerState {
   return {
     sessionId: "",
-    sessionName: "",
+    nameSlots: {},
     latestTimestamp: "",
     cwd: "",
     teamName: "",
@@ -83,7 +85,7 @@ export function reduceLine(
 ): void {
   if (entry.cwd && !state.cwd) state.cwd = entry.cwd as string;
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
-  if (entry.slug && !state.sessionName) state.sessionName = entry.slug as string;
+  state.nameSlots = applyClaudeNameEntry(state.nameSlots, entry);
   if (entry.teamName && !state.teamName) state.teamName = entry.teamName as string;
   if (entry.agentId && !state.agentId) state.agentId = entry.agentId as string;
   if (entry.isSidechain === true) state.isSidechain = true;
@@ -189,7 +191,7 @@ export function finalizeMeta(
     filePath,
     provider: CLAUDE_CODE_PROVIDER,
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName: state.sessionName || deriveSessionNameFromFirstMessage(state.firstMessage),
+    sessionName: resolveSessionName(state.nameSlots).name ?? "",
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,
@@ -219,15 +221,6 @@ export function finalizeMeta(
 // this test silently false on Windows — a clean false negative that disables
 // path-based subagent detection there without any error.
 const SUBAGENT_PATH_RE = /[\\/]subagents[\\/]/;
-
-// Fallback session name for interactive Claude Code conversations, which carry
-// no `slug` (only SDK/agent sessions do). The first user message is the only
-// human-readable name source in a normal JSONL, so use its first line, trimmed
-// to a title-sized length. Empty when there is no message text.
-export function deriveSessionNameFromFirstMessage(firstMessage: { text: string } | null): string {
-  const firstLine = firstMessage?.text.split("\n", 1)[0]?.trim() ?? "";
-  return firstLine.slice(0, 80);
-}
 
 function getShortProjectName(fullPath: string): string {
   const parts = fullPath.split("/").filter(Boolean);

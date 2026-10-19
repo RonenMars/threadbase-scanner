@@ -1,0 +1,2 @@
+{"type": "user", "uuid": "u97", "timestamp": "2026-02-01T10:97:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "<pasted_content id=\"ab12\">Refactor the parser</pasted_content id=\"ab12\">"}]}}
+{"type": "assistant", "uuid": "a98", "timestamp": "2026-02-01T10:98:00.000Z", "sessionId": "sess-name", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}

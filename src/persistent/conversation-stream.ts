@@ -1,8 +1,8 @@
 import { basename } from "path";
 import { getShortProjectName } from "../parser";
+import { resolveSessionName } from "../session-name";
 import type { Conversation, ConversationMessage, TurnDuration } from "../types";
 import { applyTeamInfo, type ConvReducerState, initialConvState } from "./conversation-reducer";
-import { deriveSessionNameFromFirstMessage } from "./metadata-reducer";
 import { streamMessages } from "./paged-reader";
 
 // A parsed conversation held in the scanner's LRU together with the resume
@@ -74,11 +74,7 @@ function assemble(
     projectPath: state.cwd,
     projectName: getShortProjectName(state.cwd),
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
-    sessionName:
-      state.sessionName ||
-      deriveSessionNameFromFirstMessage(
-        messages.find((m) => m.role === "user" && m.text && !m.isCompactSummary) ?? null,
-      ),
+    sessionName: resolveSessionName(state.nameSlots).name ?? "",
     messages,
     fullText,
     timestamp: state.latestTimestamp || new Date().toISOString(),

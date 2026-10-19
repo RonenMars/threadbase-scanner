@@ -5,7 +5,8 @@ import { basename, dirname } from "path";
 import { createInterface } from "readline";
 import { canonicalPath } from "../canonical-path";
 import { getLogger } from "../logger";
-import { deriveSessionNameFromFirstMessage } from "../persistent/metadata-reducer";
+import { copilotNameSlotsFor } from "../name-stores";
+import { applyNameCandidate, type NameSlots, resolveSessionName } from "../session-name";
 import { cleanSystemTags } from "../tags";
 import type {
   ContentTier,
@@ -48,6 +49,7 @@ export interface CopilotAccumulator {
   messageCount: number;
   lastMessageSender: MessageSender;
   firstUser: MessageSnapshot | null;
+  nameSlots: NameSlots;
   lastUser: MessageSnapshot | null;
   lastAssistant: MessageSnapshot | null;
   toolNames: string[];
@@ -115,6 +117,7 @@ export class CopilotProvider implements ScannerProvider<CopilotAccumulator> {
       messageCount: 0,
       lastMessageSender: "user",
       firstUser: null,
+      nameSlots: {},
       lastUser: null,
       lastAssistant: null,
       toolNames: [],
@@ -260,6 +263,7 @@ export function reduceCopilotEntry(
   const snapshot: MessageSnapshot = { text: text.slice(0, 200), timestamp };
   if (role === "user") {
     if (!acc.firstUser) acc.firstUser = snapshot;
+    acc.nameSlots = applyNameCandidate(acc.nameSlots, "firstUserMessage", text, COPILOT_PROVIDER);
     acc.lastUser = snapshot;
   } else {
     acc.lastAssistant = snapshot;
@@ -295,7 +299,8 @@ export function finalizeCopilotMeta(
     kind,
     externalSessionId: sessionId,
     sessionId,
-    sessionName: deriveSessionNameFromFirstMessage(acc.firstUser),
+    sessionName:
+      resolveSessionName({ ...acc.nameSlots, ...copilotNameSlotsFor(filePath) }).name ?? "",
     projectPath: acc.cwd,
     projectName: getShortProjectName(acc.cwd),
     account,
@@ -346,6 +351,7 @@ export async function parseCopilotConversation(
   let cwd = "";
   let latestTimestamp = "";
   let lastUserText = "";
+  let nameSlots: NameSlots = {};
 
   const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
   try {
@@ -372,7 +378,15 @@ export async function parseCopilotConversation(
       // Tool-only messages carry no text; they must not blank lastPrompt.
       if (!message.text) continue;
       textParts.push(message.text);
-      if (message.role === "user") lastUserText = message.text;
+      if (message.role === "user") {
+        lastUserText = message.text;
+        nameSlots = applyNameCandidate(
+          nameSlots,
+          "firstUserMessage",
+          message.text,
+          COPILOT_PROVIDER,
+        );
+      }
     }
   } catch (err) {
     log.warn({ filePath, err }, "parseCopilotConversation: read failed");
@@ -387,7 +401,7 @@ export async function parseCopilotConversation(
     projectPath: cwd,
     projectName: getShortProjectName(cwd),
     sessionId: sessionId || sessionIdFromPath(filePath),
-    sessionName: "",
+    sessionName: resolveSessionName({ ...nameSlots, ...copilotNameSlotsFor(filePath) }).name ?? "",
     messages,
     fullText: textParts.join(" "),
     timestamp: latestTimestamp || fileMtimeIso(filePath),

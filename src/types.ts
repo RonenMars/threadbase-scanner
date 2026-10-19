@@ -117,8 +117,13 @@ export interface ScanOptions {
   // Absolute roots to discover Codex CLI history under (e.g. ~/.codex/sessions).
   codexRoots?: string[];
   // Absolute roots to discover Cursor agent-transcripts under
-  // (e.g. ~/.cursor/projects). Composer state.vscdb is out of scope.
+  // (e.g. ~/.cursor/projects). Composer state.vscdb is not indexed, only
+  // read for names (see cursorStateDb).
   cursorRoots?: string[];
+  // Absolute path of Cursor's IDE `state.vscdb` (its `composerData:<id>` rows name
+  // IDE chats). Opened read-only, one key lookup per chat; never read unless set.
+  // Process-wide once set, like the chat transcripts it names.
+  cursorStateDb?: string;
   // Absolute roots to discover GitHub Copilot CLI sessions under
   // (e.g. ~/.copilot/session-state). session-store.db is not read.
   copilotRoots?: string[];

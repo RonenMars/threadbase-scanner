@@ -179,7 +179,9 @@ describe("persistent search corpus", () => {
       const filler = "x".repeat(SEARCH_BUDGET.textMax);
       write(
         "a.jsonl",
-        userText("sa", "2026-01-01T00:00:00.000Z", `OLDESTNEEDLE ${filler}`) +
+        // A short first message keeps the (now full-length) session name out of the way.
+        userText("sa", "2025-12-31T00:00:00.000Z", "opening question") +
+          userText("sa", "2026-01-01T00:00:00.000Z", `OLDESTNEEDLE ${filler}`) +
           userText("sa", "2026-01-01T00:02:00.000Z", "NEWESTNEEDLE at the tail"),
       );
 

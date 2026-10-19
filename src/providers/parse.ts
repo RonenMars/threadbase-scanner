@@ -17,6 +17,8 @@ export async function parseMetaWithProvider(
   account: string,
   tier: ContentTier,
   onEntry?: (entry: Record<string, unknown>) => void,
+  // Hands the finished accumulator to the caller just before finalize.
+  onAccumulator?: (acc: unknown) => void,
 ): Promise<ConversationMeta | null> {
   const log = getLogger();
   const acc = provider.createEmptyAccumulator();
@@ -48,5 +50,6 @@ export async function parseMetaWithProvider(
     return null;
   }
 
+  onAccumulator?.(acc);
   return provider.finalize(acc, filePath, account, tier);
 }

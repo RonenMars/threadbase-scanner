@@ -10,6 +10,13 @@ export { readGitBranch } from "./git";
 export { SearchIndexer } from "./indexer";
 export type { Logger, LoggerOptions } from "./logger";
 export { createLogger, getLogger, setLogger } from "./logger";
+export {
+  readCodexNameSlots,
+  readCopilotNameSlots,
+  readCursorCliNameSlots,
+  readCursorIdeNameSlots,
+  setCursorStateDb,
+} from "./name-stores";
 export type { ConvReducerState as JsonlParseState } from "./persistent/conversation-reducer";
 export {
   initialConvState as createJsonlParseState,
@@ -58,6 +65,13 @@ export type {
   WatchOptions,
 } from "./scanner";
 export { ConversationScanner } from "./scanner";
+export type { NameSlot, NameSlots, ResolvedSessionName } from "./session-name";
+export {
+  applyNameCandidate,
+  isValidNameCandidate,
+  NAME_PRECEDENCE,
+  resolveSessionName,
+} from "./session-name";
 export { cleanSystemTags } from "./tags";
 export { DEFAULT_TIERS, resolveTier } from "./tiers";
 export * from "./types";

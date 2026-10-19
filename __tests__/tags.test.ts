@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveSessionNameFromFirstMessage } from "../src/persistent/metadata-reducer";
+import { applyNameCandidate } from "../src/session-name";
 import { cleanSystemTags } from "../src/tags";
 
 describe("cleanSystemTags", () => {
@@ -99,8 +99,7 @@ describe("cleanSystemTags", () => {
   it("derives the session title from the pasted sentence, not the tag", () => {
     const raw =
       '\n\n<pasted_content id="d4a7">\nThis is a test. Count the amount of the folders in this folder.\n</pasted_content id="d4a7">\n';
-    const cleaned = cleanSystemTags(raw);
-    expect(deriveSessionNameFromFirstMessage({ text: cleaned })).toBe(
+    expect(applyNameCandidate({}, "firstUserMessage", raw, "claude-code").firstUserMessage).toBe(
       "This is a test. Count the amount of the folders in this folder.",
     );
   });

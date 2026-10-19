@@ -1,0 +1,3 @@
+{"type": "user", "uuid": "u46", "timestamp": "2026-02-01T10:46:00.000Z", "sessionId": "sess-name", "cwd": "/home/user/project", "message": {"role": "user", "content": [{"type": "text", "text": "Start here"}]}}
+{"type": "last-prompt", "leafUuid": "u1", "sessionId": "sess-name"}
+{"type": "last-prompt", "lastPrompt": "continue", "leafUuid": "u2", "sessionId": "sess-name"}
