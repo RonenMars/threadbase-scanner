@@ -10,6 +10,12 @@ import {
 import { foldClaudeTitle, resolveClaudeTitle, type ClaudeTitleState } from "./claude-title";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
 import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
+import {
+  firstUserTitle,
+  foldClaudeTitle,
+  resolveClaudeTitle,
+  type ClaudeTitleState,
+} from "./claude-title";
 
 // Serializable fold state for incremental metadata indexing. parseMeta()'s
 // per-line loop is expressed as reduceLine(state, entry); finalizeMeta(state)
