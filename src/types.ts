@@ -39,7 +39,7 @@ export interface MessageSnapshot {
   timestamp: string;
 }
 
-export type ProviderName = "claude-code" | "codex-cli" | "cursor";
+export type ProviderName = "claude-code" | "codex-cli" | "cursor" | "copilot";
 
 export interface ConversationMeta {
   id: string;
@@ -119,6 +119,8 @@ export interface ScanOptions {
   // Absolute roots to discover Cursor agent-transcripts under
   // (e.g. ~/.cursor/projects). Composer state.vscdb is out of scope.
   cursorRoots?: string[];
+  // Absolute roots to discover Copilot history under (e.g. ~/.copilot/session-state).
+  copilotRoots?: string[];
   tier?: string;
   tiers?: Record<string, ContentTier>;
   include?: Include;
