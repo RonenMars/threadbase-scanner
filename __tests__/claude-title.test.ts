@@ -38,6 +38,25 @@ describe("Claude Code picker title precedence", () => {
     expect(firstUserTitle("", input)).toBe("/model");
     expect(firstUserTitle("Fix auth", input)).toBe("Fix auth");
   });
+  it("shares the same first-user and latest-prompt extraction in both reducers", () => {
+    const metadata = initialReducerState();
+    const conversation = initialConvState();
+    const rows = [
+      { type: "user", message: { content: [{ type: "tool_result", content: "not a prompt" }] }, toolUseResult: {} },
+      { type: "user", message: { content: "<command-name>/model</command-name><command-message>model</command-message>" } },
+      { type: "last-prompt", lastPrompt: "continue" },
+      { type: "last-prompt", lastPrompt: "Another Claude session sent a message" },
+    ];
+    for (const row of rows) {
+      reduceLine(metadata, row, { name: "test", previewMax: 200, snippetMax: 200 } as Parameters<typeof reduceLine>[2]);
+      reduceConvLine(conversation, row);
+    }
+    expect(metadata.firstUserTitle).toBe("/model");
+    expect(conversation.firstUserTitle).toBe("/model");
+    expect(resolveClaudeTitle(metadata)).toBe("Another Claude session sent a message");
+    expect(resolveClaudeTitle(conversation)).toBe(resolveClaudeTitle(metadata));
+  });
+
   it("folds identical title metadata in the indexed and conversation reducers", () => {
     const metadata = initialReducerState();
     const conversation = initialConvState();
