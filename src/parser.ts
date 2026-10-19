@@ -5,7 +5,6 @@ import { getLogger } from "./logger";
 import { resolveClaudeTitle } from "./persistent/claude-title";
 import { applyTeamInfo, initialConvState, reduceConvLine } from "./persistent/conversation-reducer";
 import {
-  deriveSessionNameFromFirstMessage,
   finalizeMeta,
   initialReducerState,
   reduceLine,
