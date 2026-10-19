@@ -18,6 +18,19 @@ export function foldClaudeTitle(state: ClaudeTitleState, entry: Record<string, u
     state.aiTitle = entry.aiTitle.trim();
 }
 
+// The picker renders the slash command from its command-name tag when there
+// is no ordinary user text (for example /model).
+export function firstUserTitle(text: string, raw: unknown): string {
+  const normalized = cleanSystemTags(text);
+  if (normalized) return normalized;
+  const blocks = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw.map((part) => part?.text).filter((value): value is string => typeof value === "string") : [];
+  for (const block of blocks) {
+    const command = block.match(/<command-name>\s*([^<]+)\s*<\/command-name>/)?.[1]?.trim();
+    if (command) return command.startsWith("/") ? command : `/${command}`;
+  }
+  return "";
+}
+
 export function resolveClaudeTitle(state: ClaudeTitleState): string {
   return state.customTitle || state.aiTitle || state.lastPrompt ||
     cleanSystemTags(state.firstUserTitle) || state.slug || "";
