@@ -289,6 +289,7 @@ export function finalizeCopilotMeta(
   if (acc.messageCount === 0) return null;
 
   const sessionId = acc.sessionId || sessionIdFromPath(filePath);
+  const nameSlots = { ...acc.nameSlots, ...copilotNameSlotsFor(filePath) };
   const kind: "conversation" | "task" =
     acc.lastAssistant === null && acc.toolNames.length > 0 ? "task" : "conversation";
 
@@ -299,8 +300,8 @@ export function finalizeCopilotMeta(
     kind,
     externalSessionId: sessionId,
     sessionId,
-    sessionName:
-      resolveSessionName({ ...acc.nameSlots, ...copilotNameSlotsFor(filePath) }).name ?? "",
+    sessionName: resolveSessionName(nameSlots).name ?? "",
+    nameSlots,
     projectPath: acc.cwd,
     projectName: getShortProjectName(acc.cwd),
     account,

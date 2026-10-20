@@ -192,6 +192,7 @@ export function finalizeMeta(
     provider: CLAUDE_CODE_PROVIDER,
     sessionId: state.sessionId || basename(filePath, ".jsonl"),
     sessionName: resolveSessionName(state.nameSlots).name ?? "",
+    nameSlots: state.nameSlots,
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,

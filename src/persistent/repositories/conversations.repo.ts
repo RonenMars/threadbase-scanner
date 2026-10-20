@@ -39,6 +39,7 @@ export interface ConversationRow {
   is_imported_from_claude: number;
   is_imported_from_codex: number;
   is_imported_from_cursor: number;
+  name_slots: string | null;
   status: string;
 }
 
@@ -53,6 +54,7 @@ export function rowToMeta(row: ConversationRow): ConversationMeta {
     externalSessionId: row.external_session_id ?? undefined,
     sessionId: row.session_id,
     sessionName: row.session_name ?? "",
+    nameSlots: row.name_slots ? (JSON.parse(row.name_slots) as NameSlots) : undefined,
     projectPath: row.project_path ?? "",
     projectName: row.project_name ?? "",
     account: row.account,
@@ -88,12 +90,7 @@ export class ConversationsRepo {
 
   // Upsert by file_id (1 file = 1 conversation). Keyed on the unique file_id so
   // a re-index overwrites the prior summary in place.
-  upsert(
-    fileId: number,
-    meta: ConversationMeta,
-    pageMessageCount = meta.messageCount,
-    nameSlots?: NameSlots,
-  ): void {
+  upsert(fileId: number, meta: ConversationMeta, pageMessageCount = meta.messageCount): void {
     this.db
       .prepare(
         `INSERT INTO conversations (
@@ -194,7 +191,7 @@ export class ConversationsRepo {
         is_imported_from_claude: meta.isImportedFromClaude ? 1 : 0,
         is_imported_from_codex: meta.isImportedFromCodex ? 1 : 0,
         is_imported_from_cursor: meta.isImportedFromCursor ? 1 : 0,
-        name_slots: nameSlots ? JSON.stringify(nameSlots) : null,
+        name_slots: meta.nameSlots ? JSON.stringify(meta.nameSlots) : null,
       });
   }
 

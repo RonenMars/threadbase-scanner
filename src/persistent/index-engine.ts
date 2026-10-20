@@ -17,7 +17,6 @@ import {
   type ScannerProvider,
 } from "../providers/provider";
 import { appendSearchDelta, emptySearchDocument, extractSearchDelta } from "../search-document";
-import type { NameSlots } from "../session-name";
 import { resolveTier } from "../tiers";
 import type {
   ConversationMeta,
@@ -325,7 +324,7 @@ export class PersistentEngine {
     const searchDoc = appendSearchDelta(base, searchDelta);
 
     const upsert = this.db.transaction(() => {
-      this.conversations.upsert(fileId, meta, state.pageMessageCount, state.nameSlots);
+      this.conversations.upsert(fileId, meta, state.pageMessageCount);
       // Re-tokenizing ~128 KB is the expensive part of an append; skip it when
       // the row (body + metadata) would come out identical.
       if (!this.fts.isCurrent(fileId, meta, searchDoc)) {
@@ -390,19 +389,9 @@ export class PersistentEngine {
     // Codex always reparses from byte 0, so the search document is rebuilt whole
     // from the same pass rather than tail-extended.
     let searchDoc = emptySearchDocument();
-    let transcriptSlots: NameSlots = {};
-    const meta = await parseMetaWithProvider(
-      provider,
-      filePath,
-      account,
-      tier,
-      (entry) => {
-        searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
-      },
-      (acc) => {
-        transcriptSlots = (acc as { nameSlots?: NameSlots }).nameSlots ?? {};
-      },
-    );
+    const meta = await parseMetaWithProvider(provider, filePath, account, tier, (entry) => {
+      searchDoc = appendSearchDelta(searchDoc, extractSearchDelta(entry));
+    });
     if (!meta) {
       this.markDeleted(filePath);
       return null;
@@ -417,10 +406,7 @@ export class PersistentEngine {
     const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
     const fileId = this.files.ensure(filePath, account);
     const upsert = this.db.transaction(() => {
-      this.conversations.upsert(fileId, meta, meta.messageCount, {
-        ...transcriptSlots,
-        ...sideSlots,
-      });
+      this.conversations.upsert(fileId, meta, meta.messageCount);
       if (!this.fts.isCurrent(fileId, meta, searchDoc)) {
         this.fts.upsert(fileId, meta, searchDoc);
       }
