@@ -450,6 +450,7 @@ export function finalizeCursorMeta(
   if (acc.messageCount === 0) return null;
 
   const sessionId = basename(filePath, ".jsonl");
+  const nameSlots = { ...acc.nameSlots, ...cursorNameSlotsFor(filePath, sessionId) };
   const isSubagent = SUBAGENT_PATH_RE.test(filePath);
   const parent = isSubagent ? parentFromSubagentPath(filePath) : null;
   const { projectPath, projectName } = projectFromCursorPath(filePath);
@@ -464,9 +465,8 @@ export function finalizeCursorMeta(
     kind,
     externalSessionId: sessionId,
     sessionId,
-    sessionName:
-      resolveSessionName({ ...acc.nameSlots, ...cursorNameSlotsFor(filePath, sessionId) }).name ??
-      "",
+    sessionName: resolveSessionName(nameSlots).name ?? "",
+    nameSlots,
     projectPath,
     projectName,
     account,

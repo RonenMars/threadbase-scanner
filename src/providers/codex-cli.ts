@@ -381,6 +381,7 @@ export function finalizeCodexMeta(
   if (acc.messageCount === 0) return null;
 
   const sessionId = acc.sessionId || basename(filePath, ".jsonl");
+  const nameSlots = { ...acc.nameSlots, ...codexNameSlotsFor(filePath, acc.sessionId) };
   const projectPath = acc.cwd;
   // Treat a session with tool calls but no plain back-and-forth as task-shaped.
   const kind: "conversation" | "task" =
@@ -393,9 +394,8 @@ export function finalizeCodexMeta(
     kind,
     externalSessionId: acc.sessionId || undefined,
     sessionId,
-    sessionName:
-      resolveSessionName({ ...acc.nameSlots, ...codexNameSlotsFor(filePath, acc.sessionId) })
-        .name ?? "",
+    sessionName: resolveSessionName(nameSlots).name ?? "",
+    nameSlots,
     projectPath,
     projectName: getShortProjectName(projectPath),
     account,

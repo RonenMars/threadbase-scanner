@@ -1,3 +1,5 @@
+import type { NameSlots } from "./session-name";
+
 // ─── Primitives ─────────────────────────────────────────────────────
 
 export type MessageSender = "user" | "assistant";
@@ -53,6 +55,9 @@ export interface ConversationMeta {
   // Provider-native session id when it differs from the (non-unique) sessionId.
   externalSessionId?: string;
   sessionName: string;
+  // The slots sessionName was resolved from (resolveSessionName(nameSlots).name),
+  // so a host can merge further candidates through applyNameCandidate.
+  nameSlots?: NameSlots;
   projectPath: string;
   projectName: string;
   account: string;
