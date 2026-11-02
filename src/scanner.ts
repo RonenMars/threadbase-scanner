@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { closeSync, openSync, readSync, statSync } from "fs";
+import { closeSync, openSync, readSync, type Stats, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { LRUCache } from "./cache";
@@ -26,6 +26,16 @@ import {
 } from "./persistent/conversation-stream";
 import { classify } from "./persistent/cursor";
 import { PersistentEngine } from "./persistent/index-engine";
+import { finalizeMeta, initialReducerState, reduceLine } from "./persistent/metadata-reducer";
+import {
+  buildCheckpoints,
+  CHECKPOINT_INTERVAL,
+  countLeadingInjected,
+  filteredWindow,
+  pageOfConversation,
+  readPage,
+} from "./persistent/paged-reader";
+import type { Checkpoint } from "./persistent/repositories/checkpoints.repo";
 import { getProjectsDir, loadProfiles } from "./profiles";
 import { CodexCliProvider, parseCodexConversation } from "./providers/codex-cli";
 import { CopilotProvider, parseCopilotConversation } from "./providers/copilot";
@@ -54,7 +64,7 @@ import type {
   ContentTier,
   Conversation,
   ConversationMeta,
-  ConversationPage,
+  ConversationPageWithMeta,
   GetConversationOptions,
   GetConversationPageOptions,
   GroupedConversations,
@@ -65,11 +75,22 @@ import type {
   SearchResult,
   SingleFilePage,
   TreeConversation,
+  TurnDuration,
 } from "./types";
 import { FileWatcher } from "./watcher/file-watcher";
 import { type IndexJob, IndexQueue } from "./watcher/index-queue";
 
 const BATCH_SIZE = 12;
+
+// See ConversationScanner.pageIndexFor.
+interface InMemoryPageIndex {
+  size: number;
+  mtimeMs: number;
+  checkpoints: Checkpoint[];
+  meta: ConversationMeta;
+  rawTotal: number;
+  turnDurations?: TurnDuration[];
+}
 const DEFAULT_CONFIG_PATH = "~/.config/threadbase-scanner";
 
 // A test process that reaches the default path writes its fixtures into the
@@ -604,43 +625,111 @@ export class ConversationScanner {
   }
 
   // Return one bounded window of a conversation's messages plus the total
-  // message count, so a caller can serve the last page and scroll back without
-  // holding the whole conversation itself.
+  // message count, the conversation's current meta and its turn durations, so a
+  // caller can serve the last page and scroll back without holding the whole
+  // conversation itself.
   //
-  // The window is `[max(0, beforeIndex - limit), beforeIndex)` in chronological
+  // Messages are those of the full read with the LEADING run of injected user
+  // turns dropped (options.isInjectedContext, default isCodexInjectedContext);
+  // `total`, `fromIndex` and `beforeIndex` all count in that filtered space. The
+  // window is `[max(0, beforeIndex - limit), beforeIndex)` in chronological
   // order; `beforeIndex` defaults to `total` (the newest page). `fromIndex` is
   // the window's start index, so the caller can derive `has_more_older`
   // (fromIndex > 0). Returns null when the id can't be resolved/parsed — the
   // same contract as getConversation.
   //
-  // Persistent mode: a true bounded read — the engine seeks from the nearest
-  // checkpoint and parses only the requested window (checkpoints are built
-  // lazily for large conversations). Windowed message indices are proven
-  // identical to parseConversation().messages.slice(...) by the paged-reader
-  // equivalence test.
-  //
-  // Legacy mode: parse-once-then-slice via getConversation (cached in the LRU),
-  // which is identical by construction.
+  // Every call reads the file as it is on disk now, never a cached parse:
+  // persistent mode refreshes the index first (O(appended bytes)) and the engine
+  // seeks from the nearest checkpoint. In-memory claude-code files keep a
+  // stat-validated checkpoint index (pageIndexFor). Other providers are parsed
+  // whole per call.
   async getConversationPage(
     id: string,
     options: GetConversationPageOptions,
-  ): Promise<ConversationPage | null> {
-    if (this.persistent) {
-      return this.engine().getPage(canonicalPath(id), options);
+  ): Promise<ConversationPageWithMeta | null> {
+    const cid = canonicalPath(id);
+    const known = this.persistent
+      ? this.engine().getByIdOrSession(cid)
+      : (this.metadataCache.get(cid) ?? this.resolveSessionId(cid));
+    if (!known) return null;
+
+    const isClaude =
+      known.provider !== CODEX_CLI_PROVIDER &&
+      known.provider !== CURSOR_PROVIDER &&
+      known.provider !== COPILOT_PROVIDER;
+
+    if (!this.persistent && isClaude) {
+      const index = await this.pageIndexFor(known.filePath, known.account);
+      if (!index) return null;
+      const skip = await countLeadingInjected(known.filePath, options.isInjectedContext);
+      const { total, fromIndex, raw } = filteredWindow(index.rawTotal, skip, options);
+      const rawFrom = raw.beforeIndex - raw.limit;
+      let floor: Checkpoint | null = null;
+      for (const c of index.checkpoints) if (c.messageIndex <= rawFrom) floor = c;
+      const page = await readPage(known.filePath, index.rawTotal, raw, floor);
+      return {
+        messages: page.messages,
+        total,
+        fromIndex,
+        meta: index.meta,
+        turnDurations: index.turnDurations,
+      };
     }
 
-    const conversation = await this.getConversation(id);
-    if (!conversation) return null;
+    const meta = await this.refreshFile(known.filePath, known.account);
+    if (!meta) return null;
+    if (this.persistent) {
+      const page = await this.engine().getPage(meta.filePath, options);
+      return page && { ...page, meta };
+    }
+    // ponytail: in-memory non-claude files are reparsed whole per call (the
+    // refresh above evicted the cached parse); they are small next to claude-code
+    // transcripts. A stat gate like pageIndexFor's is the upgrade path.
+    const conversation = await this.getConversation(meta.filePath);
+    return conversation && { ...pageOfConversation(conversation, options), meta };
+  }
 
-    const { messages } = conversation;
-    const total = messages.length;
-    const { limit } = options;
-    const beforeIndex = options.beforeIndex ?? total;
+  // In-memory claude-code paging index: one streamed pass builds the checkpoint
+  // chain and folds the metadata (meta, page total, turn durations) alongside,
+  // reused until the file's size or mtime changes. Memory stays bounded: the
+  // file is never held, and the index LRU is capped.
+  // ponytail: any change rebuilds from byte 0; extending from the last
+  // checkpoint plus a persisted ReducerState (as the engine does) is the
+  // upgrade path if live-appended transcripts make this hot.
+  private readonly pageIndexes = new LRUCache<string, InMemoryPageIndex>(32);
 
-    const fromIndex = Math.max(0, beforeIndex - limit);
-    const window = messages.slice(fromIndex, beforeIndex);
+  private async pageIndexFor(filePath: string, account: string): Promise<InMemoryPageIndex | null> {
+    let stat: Stats;
+    try {
+      stat = statSync(filePath);
+    } catch {
+      this.pageIndexes.delete(filePath);
+      return null;
+    }
+    const cached = this.pageIndexes.get(filePath);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached;
 
-    return { messages: window, total, fromIndex };
+    const state = initialReducerState();
+    const checkpoints = await buildCheckpoints(filePath, CHECKPOINT_INTERVAL, null, (entry) => {
+      reduceLine(state, entry, this.lastTier);
+      return false;
+    });
+    const meta = finalizeMeta(state, filePath, account, this.lastTier);
+    if (!meta) {
+      this.pageIndexes.delete(filePath);
+      return null;
+    }
+    meta.gitBranch = readGitBranch(meta.projectPath);
+    const index: InMemoryPageIndex = {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      checkpoints,
+      meta,
+      rawTotal: state.pageMessageCount,
+      turnDurations: state.turnDurations?.length ? state.turnDurations : undefined,
+    };
+    this.pageIndexes.set(filePath, index);
+    return index;
   }
 
   // Parse one JSONL file directly and slice a page window — without any prior

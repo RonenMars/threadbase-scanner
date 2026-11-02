@@ -6,10 +6,17 @@ import {
   extractToolUseBlocks,
   isOnlyToolResultContent,
   isTeammateContent,
+  turnDurationOf,
 } from "../parser";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
 import { type NameSlots, resolveSessionName } from "../session-name";
-import type { ContentTier, ConversationMeta, MessageSender, MessageSnapshot } from "../types";
+import type {
+  ContentTier,
+  ConversationMeta,
+  MessageSender,
+  MessageSnapshot,
+  TurnDuration,
+} from "../types";
 import { applyClaudeNameEntry } from "./claude-name-slots";
 
 // Serializable fold state for incremental metadata indexing. parseMeta()'s
@@ -46,6 +53,10 @@ export interface ReducerState {
   previewLength: number;
   snippetLength: number;
   badJsonLines: number;
+  // parseConversation's turnDurations, so a page can return them without a
+  // full read. Optional: a state persisted before this field existed lacks it,
+  // and indexFile refolds such a file once.
+  turnDurations?: TurnDuration[];
 }
 
 export function initialReducerState(): ReducerState {
@@ -72,6 +83,7 @@ export function initialReducerState(): ReducerState {
     previewLength: 0,
     snippetLength: 0,
     badJsonLines: 0,
+    turnDurations: [],
   };
 }
 
@@ -93,6 +105,9 @@ export function reduceLine(
     const ts = entry.timestamp as string;
     if (!state.latestTimestamp || ts > state.latestTimestamp) state.latestTimestamp = ts;
   }
+
+  const turnDuration = turnDurationOf(entry);
+  if (turnDuration) state.turnDurations?.push(turnDuration);
 
   const type = entry.type as string;
 

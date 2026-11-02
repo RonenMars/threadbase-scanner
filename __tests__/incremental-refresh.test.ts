@@ -242,7 +242,7 @@ describe("incremental refresh (byte-offset checkpointing)", () => {
         },
       });
 
-    it("ignores checkpoints past the current EOF and serves the page from byte 0", async () => {
+    it("never serves a page through checkpoints past the current EOF", async () => {
       // Seed with LONG lines so checkpoint 500's byteOffset is large.
       const seeded: string[] = [];
       for (let i = 0; i < 1100; i++) seeded.push(textLine(i, 400, "sess-live"));
@@ -264,9 +264,10 @@ describe("incremental refresh (byte-offset checkpointing)", () => {
       // The window is served from the real current bytes, not a stale seek.
       expect(page?.messages).toEqual(full?.messages.slice(680, 700));
 
-      // A refresh reconciles fully: stale chain dropped, totals correct again.
+      // The page call reconciled the index itself: the stale chain was dropped
+      // and rebuilt for the new bytes, and a later refresh leaves it alone.
       await scanner.refreshFile(file);
-      expect(checkpointRows(dbPath, file)).toEqual([]);
+      expect(checkpointRows(dbPath, file).map((r) => r.message_index)).toEqual([500]);
       const after = await scanner.getConversationPage(file, { limit: 20 });
       expect(after?.total).toBe(700);
       expect(after?.messages).toEqual(full?.messages.slice(680, 700));
