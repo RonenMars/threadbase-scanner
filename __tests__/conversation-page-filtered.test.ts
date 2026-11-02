@@ -9,9 +9,10 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/persistent/db";
 import * as pagedReaderModule from "../src/persistent/paged-reader";
+import { pageOfConversation } from "../src/persistent/paged-reader";
 import { ConversationScanner } from "../src/scanner";
 import { isCodexInjectedContext } from "../src/session-name";
-import type { ConversationMessage, GetConversationPageOptions } from "../src/types";
+import type { Conversation, ConversationMessage, GetConversationPageOptions } from "../src/types";
 
 const AGENTS_DUMP =
   "# AGENTS.md instructions for /home/proj\n\n<INSTRUCTIONS>\nBe terse.\n</INSTRUCTIONS>";
@@ -112,7 +113,7 @@ function claudeNoise(i: number): string[] {
   return out;
 }
 
-function claudeLines(start: number, count: number, withHead: boolean): string {
+function claudeLines(start: number, count: number, withHead: boolean, hostPrompt = false): string {
   const lines: string[] = [];
   if (withHead) {
     lines.push(
@@ -134,6 +135,18 @@ function claudeLines(start: number, count: number, withHead: boolean): string {
         message: { role: "user", content: AGENTS_DUMP },
       }),
     );
+    if (hostPrompt) {
+      lines.push(
+        JSON.stringify({
+          type: "user",
+          uuid: "host-head",
+          timestamp: ts(0),
+          sessionId: "sess-claude",
+          cwd: "/home/proj",
+          message: { role: "user", content: HOST_PROMPT },
+        }),
+      );
+    }
   }
   for (let i = start; i < start + count; i++) lines.push(claudeLine(i), ...claudeNoise(i));
   return `${lines.join("\n")}\n`;
@@ -276,7 +289,7 @@ describe.each<Mode>(["persistent", "in-memory"])("getConversationPage (%s)", (mo
   }
 
   const write = (provider: Provider, count: number, hostPrompt = false) => {
-    if (provider === "claude") writeFileSync(claudeFile, claudeLines(0, count, true));
+    if (provider === "claude") writeFileSync(claudeFile, claudeLines(0, count, true, hostPrompt));
     else writeFileSync(codexFile, codexLines(0, count, true, hostPrompt));
     return provider === "claude" ? claudeFile : codexFile;
   };
@@ -323,24 +336,52 @@ describe.each<Mode>(["persistent", "in-memory"])("getConversationPage (%s)", (mo
     expect(page?.total).toBe(expected.length);
   });
 
-  it("a host predicate extends the leading-run filter to the host's own injected prompts", async () => {
-    const file = write("codex", 300, true);
-    const scanner = await scanned("codex");
-    const isInjected = (text: string) =>
-      isCodexInjectedContext(text) || text.startsWith(HOST_PROMPT);
-    const full = await scanner.getConversation(file);
-    const expected = servable(full?.messages ?? [], isInjected);
-    expect(expected.length).toBe((full?.messages.length ?? 0) - 3);
+  describe.each<Provider>(["claude", "codex"])("%s filter predicate", (provider) => {
+    it("a host predicate extends the leading-run filter to the host's own injected prompts", async () => {
+      const file = write(provider, 300, true);
+      const scanner = await scanned(provider);
+      const isInjected = (text: string) =>
+        isCodexInjectedContext(text) || text.startsWith(HOST_PROMPT);
+      const full = await scanner.getConversation(file);
+      const expected = servable(full?.messages ?? [], isInjected);
+      expect(expected.length).toBe((full?.messages.length ?? 0) - (provider === "codex" ? 3 : 2));
 
-    const { messages, newest } = await readAllPages(scanner, file, 40, {
-      isInjectedContext: isInjected,
+      const { messages, newest } = await readAllPages(scanner, file, 40, {
+        isInjectedContext: isInjected,
+      });
+      expect(messages).toEqual(expected);
+      expect(newest?.total).toBe(expected.length);
+
+      // Default predicate: the host prompt is not the scanner's to recognise.
+      const dflt = await scanner.getConversationPage(file, { beforeIndex: 1, limit: 1 });
+      expect(dflt?.messages[0]?.text).toBe(HOST_PROMPT);
     });
-    expect(messages).toEqual(expected);
-    expect(newest?.total).toBe(expected.length);
 
-    // Default predicate: the host prompt is not the scanner's to recognise.
-    const dflt = await scanner.getConversationPage(file, { beforeIndex: 1, limit: 1 });
-    expect(dflt?.messages[0]?.text).toBe(HOST_PROMPT);
+    it("the filter only ever drops user turns", async () => {
+      const file = write(provider, 300);
+      const scanner = await scanned(provider);
+      const all = () => true;
+      const expected = servable((await scanner.getConversation(file))?.messages ?? [], all);
+      expect(expected.length).toBeGreaterThan(0);
+      const { messages } = await readAllPages(scanner, file, 40, { isInjectedContext: all });
+      expect(messages).toEqual(expected);
+    });
+  });
+
+  it("a short conversation has no turn durations and carries its git branch", async () => {
+    const repo = join(dir, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/feat-x\n");
+    writeFileSync(
+      claudeFile,
+      claudeLines(0, 5, true).replaceAll('"/home/proj"', JSON.stringify(repo)),
+    );
+    const scanner = await scanned("claude");
+    const full = await scanner.getConversation(claudeFile);
+    expect(full?.turnDurations).toBeUndefined();
+    const page = await scanner.getConversationPage(claudeFile, { limit: 20 });
+    expect(page?.turnDurations).toBeUndefined();
+    expect(page?.meta.gitBranch).toBe("feat-x");
   });
 
   describe.each<Provider>(["claude", "codex"])("%s freshness", (provider) => {
@@ -368,34 +409,45 @@ describe.each<Mode>(["persistent", "in-memory"])("getConversationPage (%s)", (mo
 });
 
 describe("getConversationPage (persistent) on an index written before turn durations", () => {
-  it("refolds the file once so the page carries its turn durations", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "page-legacy-"));
-    mkdirSync(join(dir, "projects", "p"), { recursive: true });
-    const file = join(dir, "projects", "p", "sess-claude.jsonl");
-    const dbPath = join(dir, "i.db");
-    const profiles = [{ id: "default", label: "T", configDir: dir, enabled: true }];
-    writeFileSync(file, claudeLines(0, 300, true));
-    try {
-      const first = new ConversationScanner({ persistent: { dbPath } });
-      await first.scan({ profiles });
-      await first.close();
-      // What an older scanner persisted: the same fold, without the field.
-      const db = openDatabase(dbPath);
-      db.prepare(
-        "UPDATE conversation_files SET reducer_state = json_remove(reducer_state, '$.turnDurations')",
-      ).run();
-      db.close();
+  it.each(["unchanged", "appended"])(
+    "refolds a(n) %s file once so the page carries its turn durations",
+    async (change) => {
+      const dir = mkdtempSync(join(tmpdir(), "page-legacy-"));
+      mkdirSync(join(dir, "projects", "p"), { recursive: true });
+      const file = join(dir, "projects", "p", "sess-claude.jsonl");
+      const dbPath = join(dir, "i.db");
+      const profiles = [{ id: "default", label: "T", configDir: dir, enabled: true }];
+      writeFileSync(file, claudeLines(0, 300, true));
+      try {
+        const first = new ConversationScanner({ persistent: { dbPath } });
+        await first.scan({ profiles });
+        await first.close();
+        // What an older scanner persisted: the same fold, without the field.
+        const db = openDatabase(dbPath);
+        db.prepare(
+          "UPDATE conversation_files SET reducer_state = json_remove(reducer_state, '$.turnDurations')",
+        ).run();
+        db.close();
+        if (change === "appended") appendFileSync(file, claudeLines(300, 10, false));
 
-      const scanner = new ConversationScanner({ persistent: { dbPath } });
-      await scanner.scan({ profiles });
-      const page = await scanner.getConversationPage(file, { limit: 20 });
-      expect(page?.turnDurations).toEqual((await scanner.getConversation(file))?.turnDurations);
-      expect(page?.turnDurations?.length).toBeGreaterThan(0);
-      await scanner.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+        const scanner = new ConversationScanner({ persistent: { dbPath } });
+        await scanner.scan({ profiles });
+        // The scan itself refolds, so the page call has nothing left to redo.
+        const check = openDatabase(dbPath);
+        const row = check.prepare("SELECT reducer_state FROM conversation_files").get() as {
+          reducer_state: string;
+        };
+        check.close();
+        expect(row.reducer_state).toContain('"turnDurations"');
+        const page = await scanner.getConversationPage(file, { limit: 20 });
+        expect(page?.turnDurations).toEqual((await scanner.getConversation(file))?.turnDurations);
+        expect(page?.turnDurations?.length).toBeGreaterThan(0);
+        await scanner.close();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("getConversationPage (in-memory) bounded reads", () => {
@@ -430,5 +482,17 @@ describe("getConversationPage (in-memory) bounded reads", () => {
     await scanner.getConversationPage(file, { limit: 20 });
     expect(build).toHaveBeenCalledTimes(2);
     await scanner.close();
+  });
+});
+
+describe("pageOfConversation", () => {
+  it("pages an all-injected conversation as empty and keeps its turn durations", () => {
+    const injected = { role: "user", text: AGENTS_DUMP, timestamp: ts(0) } as ConversationMessage;
+    const turnDurations = [{ durationMs: 5, messageCount: 1 }];
+    const page = pageOfConversation(
+      { messages: [injected, injected], turnDurations } as unknown as Conversation,
+      { limit: 10 },
+    );
+    expect(page).toEqual({ messages: [], total: 0, fromIndex: 0, turnDurations });
   });
 });
