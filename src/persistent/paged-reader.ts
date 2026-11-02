@@ -1,6 +1,13 @@
 import { createReadStream } from "fs";
 import { setImmediate as yieldToEventLoop } from "timers/promises";
-import type { ConversationMessage, ConversationPage } from "../types";
+import { isCodexInjectedContext } from "../session-name";
+import type {
+  Conversation,
+  ConversationMessage,
+  ConversationPage,
+  GetConversationPageOptions,
+  TurnDuration,
+} from "../types";
 import {
   applyTeamInfo,
   type ConvReducerState,
@@ -77,11 +84,13 @@ export async function streamMessages(
 // a clean resume point for message index k*interval. Pass `from` (the last
 // persisted checkpoint) to EXTEND an existing chain: the stream resumes from
 // its offset/state and only checkpoints past it are returned — an append costs
-// O(new bytes), never a re-walk of the immutable prefix.
+// O(new bytes), never a re-walk of the immutable prefix. `onEntry` is passed
+// through to streamMessages, so a caller can fold metadata in the same pass.
 export async function buildCheckpoints(
   filePath: string,
   interval = CHECKPOINT_INTERVAL,
   from: Checkpoint | null = null,
+  onEntry?: (entry: Record<string, unknown>) => boolean,
 ): Promise<Checkpoint[]> {
   const checkpoints: Checkpoint[] = [];
   const state = from ? from.state : initialConvState();
@@ -106,6 +115,7 @@ export async function buildCheckpoints(
       }
       return false; // never stop early — we want the whole file
     },
+    onEntry,
   );
 
   return checkpoints;
@@ -139,4 +149,65 @@ export async function readPage(
 
   applyTeamInfo(window, state);
   return { messages: window, total, fromIndex };
+}
+
+// ─── Leading injected-context filter ────────────────────────────────────────
+// getConversationPage pages the conversation with its LEADING run of injected
+// user turns (AGENTS.md dumps, permission preambles, a host's own prompts)
+// dropped — a host's servable filter. Mid-conversation matches are kept.
+
+function isInjectedTurn(message: ConversationMessage, isInjected: (text: string) => boolean) {
+  return message.role === "user" && isInjected(message.text ?? "");
+}
+
+// Count the leading injected run of a file by streaming from byte 0 and
+// stopping at the first message that is not one, so it reads only the head.
+export async function countLeadingInjected(
+  filePath: string,
+  isInjected: (text: string) => boolean = isCodexInjectedContext,
+): Promise<number> {
+  let skip = 0;
+  await streamMessages(filePath, 0, 0, initialConvState(), (message) => {
+    if (!isInjectedTurn(message, isInjected)) return true;
+    skip += 1;
+    return false;
+  });
+  return skip;
+}
+
+// Map a window over the filtered messages (the caller's index space) onto the
+// raw message indices: `raw` is the readPage/slice window, `total`/`fromIndex`
+// are what the caller sees.
+export function filteredWindow(
+  rawTotal: number,
+  skip: number,
+  options: GetConversationPageOptions,
+): { total: number; fromIndex: number; raw: { beforeIndex: number; limit: number } } {
+  const total = Math.max(0, rawTotal - skip);
+  const beforeIndex = options.beforeIndex ?? total;
+  const fromIndex = Math.max(0, beforeIndex - options.limit);
+  return {
+    total,
+    fromIndex,
+    raw: { beforeIndex: beforeIndex + skip, limit: beforeIndex - fromIndex },
+  };
+}
+
+// The same filtered window over an already-parsed conversation (providers the
+// bounded reader cannot fold, which are parsed whole).
+export function pageOfConversation(
+  conversation: Conversation,
+  options: GetConversationPageOptions,
+): ConversationPage & { turnDurations?: TurnDuration[] } {
+  const { messages } = conversation;
+  const isInjected = options.isInjectedContext ?? isCodexInjectedContext;
+  const firstKept = messages.findIndex((m) => !isInjectedTurn(m, isInjected));
+  const skip = firstKept === -1 ? messages.length : firstKept;
+  const { total, fromIndex, raw } = filteredWindow(messages.length, skip, options);
+  return {
+    messages: messages.slice(raw.beforeIndex - raw.limit, raw.beforeIndex),
+    total,
+    fromIndex,
+    turnDurations: conversation.turnDurations,
+  };
 }

@@ -196,12 +196,23 @@ export interface GetConversationOptions {
 export interface GetConversationPageOptions {
   beforeIndex?: number;
   limit: number;
+  // getConversationPage only: the leading run of user messages this matches is
+  // dropped before paging, and indices/total count the remaining messages.
+  // Defaults to isCodexInjectedContext; a host passes its own superset.
+  isInjectedContext?: (text: string) => boolean;
 }
 
 export interface ConversationPage {
   messages: ConversationMessage[];
   total: number;
   fromIndex: number;
+}
+
+// What getConversationPage returns: the window plus the conversation's current
+// meta and turn durations, so one call can build a detail response.
+export interface ConversationPageWithMeta extends ConversationPage {
+  meta: ConversationMeta;
+  turnDurations?: TurnDuration[];
 }
 
 // A page sliced directly from a single parsed JSONL file, carrying the parsed

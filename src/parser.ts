@@ -17,6 +17,22 @@ import type {
   TurnDuration,
 } from "./types";
 
+// A claude-code `turn_duration` system line as a TurnDuration, else null.
+export function turnDurationOf(entry: Record<string, unknown>): TurnDuration | null {
+  if (
+    entry.type !== "system" ||
+    entry.subtype !== "turn_duration" ||
+    typeof entry.durationMs !== "number"
+  ) {
+    return null;
+  }
+  return {
+    durationMs: entry.durationMs,
+    messageCount: (entry.messageCount as number) || 0,
+    uuid: entry.uuid as string | undefined,
+  };
+}
+
 // `onEntry` lets a caller fold a second accumulator (the search document) over
 // the same lines without re-reading the file.
 export async function parseMeta(
@@ -96,16 +112,9 @@ export async function parseConversation(
         continue;
       }
 
-      if (
-        entry.type === "system" &&
-        entry.subtype === "turn_duration" &&
-        typeof entry.durationMs === "number"
-      ) {
-        turnDurations.push({
-          durationMs: entry.durationMs as number,
-          messageCount: (entry.messageCount as number) || 0,
-          uuid: entry.uuid as string | undefined,
-        });
+      const turnDuration = turnDurationOf(entry);
+      if (turnDuration) {
+        turnDurations.push(turnDuration);
         continue;
       }
 

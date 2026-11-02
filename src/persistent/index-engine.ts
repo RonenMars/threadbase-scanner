@@ -25,13 +25,21 @@ import type {
   Profile,
   ScanOptions,
   SearchHighlight,
+  TurnDuration,
 } from "../types";
 import { classify, type FileChange, fingerprint } from "./cursor";
 import { type DB, openDatabase } from "./db";
 import { discoverJsonlFilesGated, FULL_RECONCILE_EVERY_N_SCANS } from "./dir-watermark";
 import { type TailReadResult, tailReduce } from "./jsonl-tail-reader";
 import { finalizeMeta, initialReducerState, type ReducerState } from "./metadata-reducer";
-import { buildCheckpoints, CHECKPOINT_INTERVAL, readPage } from "./paged-reader";
+import {
+  buildCheckpoints,
+  CHECKPOINT_INTERVAL,
+  countLeadingInjected,
+  filteredWindow,
+  pageOfConversation,
+  readPage,
+} from "./paged-reader";
 import { CheckpointsRepo } from "./repositories/checkpoints.repo";
 import { ConversationFilesRepo } from "./repositories/conversation-files.repo";
 import { ConversationsRepo } from "./repositories/conversations.repo";
@@ -234,6 +242,13 @@ export class PersistentEngine {
     // spelling, whichever separator style the caller passed in.
     const filePath = canonicalPath(rawFilePath);
     const existing = this.files.getByPath(filePath);
+    // A claude-code fold persisted before ReducerState carried turnDurations
+    // can't be resumed into one that does: refold that file from 0, once.
+    const refold =
+      force ||
+      ((!provider || provider.name === CLAUDE_CODE_PROVIDER) &&
+        !!existing?.reducer_state &&
+        !existing.reducer_state.includes('"turnDurations"'));
     const classified = classify(filePath, existing);
     const stat = classified.stat;
     let change = classified.change;
@@ -245,7 +260,7 @@ export class PersistentEngine {
     }
     // Unchanged: serve the persisted summary without re-reading (unless a
     // caller forces a re-parse, e.g. refreshFile after a same-size edit).
-    if (change === "unchanged" && !force) {
+    if (change === "unchanged" && !refold) {
       const meta = this.conversations.getBySourcePath(filePath);
       // Codex/Cursor/Copilot names also come from stores beside the transcript,
       // which can change while the transcript does not. Re-reading them is cheap
@@ -282,7 +297,7 @@ export class PersistentEngine {
     // appended → resume the persisted fold from the cursor; reindex/force →
     // start fresh from offset 0. This is the incremental win: an append only
     // reads the newly-written bytes.
-    const resume = change === "appended" && !force && existing?.reducer_state;
+    const resume = change === "appended" && !refold && existing?.reducer_state;
     const state: ReducerState = resume
       ? (JSON.parse(existing.reducer_state as string) as ReducerState)
       : initialReducerState();
@@ -490,7 +505,14 @@ export class PersistentEngine {
   // resolved to an indexed conversation. For conversations large enough to span
   // a checkpoint interval, checkpoints are built lazily on first access and
   // reused thereafter. Smaller conversations read from the start (cheap).
-  async getPage(id: string, options: GetConversationPageOptions): Promise<ConversationPage | null> {
+  //
+  // The window is over the conversation with its leading injected-context run
+  // dropped (options.isInjectedContext, see filteredWindow). The caller keeps the
+  // index current (refreshFile) first; this reads what the index describes.
+  async getPage(
+    id: string,
+    options: GetConversationPageOptions,
+  ): Promise<(ConversationPage & { turnDurations?: TurnDuration[] }) | null> {
     const meta = this.conversations.getByIdOrSession(id);
     if (!meta) return null;
     const filePath = meta.filePath;
@@ -499,8 +521,9 @@ export class PersistentEngine {
     // (readPage) uses — that reducer only understands the claude-code line shape,
     // so readPage would return an empty window for a Codex file. Codex rollout
     // sessions are small (already reparsed from offset 0 on every change), so
-    // parse the whole conversation and slice the window — identical math to the
-    // claude-code path and to the legacy getConversationPage slice.
+    // parse the whole conversation and slice the window.
+    // ponytail: O(file) per page for these providers; a resumable Codex fold
+    // (see indexFile) is the upgrade path if their files grow large.
     if (
       meta.provider === CODEX_CLI_PROVIDER ||
       meta.provider === CURSOR_PROVIDER ||
@@ -513,23 +536,19 @@ export class PersistentEngine {
             ? await parseCursorConversation(filePath, meta.account)
             : await parseCopilotConversation(filePath, meta.account);
       if (!conversation) return null;
-      const { messages } = conversation;
-      const total = messages.length;
-      const beforeIndex = options.beforeIndex ?? total;
-      const fromIndex = Math.max(0, beforeIndex - options.limit);
-      return { messages: messages.slice(fromIndex, beforeIndex), total, fromIndex };
+      return pageOfConversation(conversation, options);
     }
 
     // Bounded paging uses the parseConversation message total, which differs
     // from meta.messageCount (the metadata count excludes tool_use-only and
     // thinking-only lines).
-    const total = this.conversations.pageMessageCount(filePath);
+    const rawTotal = this.conversations.pageMessageCount(filePath);
+    const skip = await countLeadingInjected(filePath, options.isInjectedContext);
+    const { total, fromIndex, raw } = filteredWindow(rawTotal, skip, options);
 
-    await this.ensureCheckpoints(filePath, total);
+    await this.ensureCheckpoints(filePath, rawTotal);
 
-    const beforeIndex = options.beforeIndex ?? total;
-    const fromIndex = Math.max(0, beforeIndex - options.limit);
-    let floor = this.checkpoints.floor(filePath, fromIndex);
+    let floor = this.checkpoints.floor(filePath, raw.beforeIndex - raw.limit);
     // A checkpoint past the current EOF is stale — the file was truncated or
     // replaced on disk and no refresh has landed yet. Seeking there would read
     // nothing (or garbage), so fall back to byte 0: correct, just slower, and
@@ -542,7 +561,15 @@ export class PersistentEngine {
         // fall through to readPage's own error handling
       }
     }
-    return readPage(filePath, total, options, floor);
+    const page = await readPage(filePath, rawTotal, raw, floor);
+    const state = this.files.getByPath(filePath)?.reducer_state;
+    const durations = state ? (JSON.parse(state) as ReducerState).turnDurations : undefined;
+    return {
+      messages: page.messages,
+      total,
+      fromIndex,
+      turnDurations: durations?.length ? durations : undefined,
+    };
   }
 
   // Build or extend the checkpoint chain so it covers `total` messages. Cold
