@@ -1,0 +1,2 @@
+{"type":"user","uuid":"q1","timestamp":"2026-02-01T08:00:00.000Z","sessionId":"sess-quote","cwd":"/home/user/project","message":{"role":"user","content":"Why does this transcript line say <teammate-message teammate_id=\"agent-1\">Done</teammate-message>? Explain the format."}}
+{"type":"assistant","uuid":"q2","timestamp":"2026-02-01T08:00:10.000Z","sessionId":"sess-quote","message":{"role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"That tag is how a lead receives a teammate's message."}]}}

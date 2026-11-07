@@ -1,0 +1,3 @@
+{"type":"user","uuid":"l1","timestamp":"2026-02-01T08:00:00.000Z","sessionId":"sess-lead","cwd":"/home/user/team-project","message":{"role":"user","content":"Spawn a team and fix the auth module"}}
+{"type":"assistant","uuid":"l2","timestamp":"2026-02-01T08:00:10.000Z","sessionId":"sess-lead","message":{"role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Spawning agent-1."}]}}
+{"type":"user","uuid":"l3","timestamp":"2026-02-01T08:01:00.000Z","sessionId":"sess-lead","message":{"role":"user","content":[{"type":"text","text":"<teammate-message teammate_id=\"agent-1\" summary=\"Auth fixed\" color=\"blue\">Done, auth module fixed</teammate-message>"}]}}

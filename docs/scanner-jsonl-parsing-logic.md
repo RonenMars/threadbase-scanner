@@ -170,7 +170,7 @@ Every `tool_use` block in any entry's content has its `name` added to a `Set<str
 
 ### Teammate detection
 
-Checked once on the first `"user"` entry. If the text content contains the literal string `<teammate-message`, `isTeammate` is set to `true`.
+`isTeammate` is `true` when any entry carries a `teamName` field (the first value seen is kept as `teamName`). A teammate's records carry it from the first entry Claude Code writes after its setup records; the lead's own transcript never does, although the lead receives `<teammate-message>` tags too, so the tag is not consulted.
 
 ### Subagent detection
 

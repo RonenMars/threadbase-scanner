@@ -5,7 +5,6 @@ import {
   extractThinking,
   extractToolUseBlocks,
   isOnlyToolResultContent,
-  isTeammateContent,
   turnDurationOf,
 } from "../parser";
 import { CLAUDE_CODE_PROVIDER } from "../providers/provider";
@@ -42,8 +41,6 @@ export interface ReducerState {
   // `sessionId`, so `agentId` is the only thing that distinguishes siblings.
   agentId: string;
   isSidechain: boolean;
-  isTeammate: boolean;
-  firstUserSeen: boolean;
   firstMessage: MessageSnapshot | null;
   lastMessage: MessageSnapshot | null;
   lastPrompt: string;
@@ -71,8 +68,6 @@ export function initialReducerState(): ReducerState {
     lastMessageSender: "user",
     agentId: "",
     isSidechain: false,
-    isTeammate: false,
-    firstUserSeen: false,
     firstMessage: null,
     lastMessage: null,
     lastPrompt: "",
@@ -131,11 +126,6 @@ export function reduceLine(
   }
 
   if (state.model === null && msg?.model) state.model = msg.model as string;
-
-  if (type === "user" && !state.firstUserSeen) {
-    state.firstUserSeen = true;
-    if (isTeammateContent(msg?.content)) state.isTeammate = true;
-  }
 
   const content = extractTextContent(msg?.content);
   const hasToolUseResult = type === "user" && entry.toolUseResult != null;
@@ -224,7 +214,9 @@ export function finalizeMeta(
     // A sidechain line's `sessionId` IS the parent's id — that is exactly the
     // conflation `subagentId` exists to undo, so it is the parent UUID here.
     parentSessionUuid: isSidechain && state.sessionId ? state.sessionId : undefined,
-    isTeammate: state.isTeammate,
+    // A teammate's records carry teamName; the lead's never do, yet the lead
+    // receives <teammate-message> tags too, so the tag is not the discriminator.
+    isTeammate: Boolean(state.teamName),
     teamName: state.teamName || null,
     toolNames: state.toolNames,
     firstMessage: state.firstMessage,
