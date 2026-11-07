@@ -243,20 +243,6 @@ export function isOnlyToolResultContent(content: unknown): boolean {
   return content.length > 0 && content.every((item) => item?.type === "tool_result");
 }
 
-export function isTeammateContent(content: unknown): boolean {
-  const raw =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map((item) =>
-              typeof item === "string" ? item : item?.type === "text" ? (item.text ?? "") : "",
-            )
-            .join("")
-        : "";
-  return raw.includes("<teammate-message");
-}
-
 export function extractThinking(content: unknown): { content: string; signature: string } {
   if (!Array.isArray(content)) return { content: "", signature: "" };
   const blocks = content.filter((item) => item?.type === "thinking");

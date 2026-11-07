@@ -20,7 +20,7 @@ describe("parseMeta", () => {
     expect(meta?.projectPath).toBe("/home/user/project");
   });
 
-  it("detects teammate from first user message", async () => {
+  it("detects a teammate by the teamName its records carry", async () => {
     const meta = await parseMeta(
       join(FIXTURES, "teammate-conversation.jsonl"),
       "default",
@@ -29,6 +29,39 @@ describe("parseMeta", () => {
     expect(meta).not.toBeNull();
     expect(meta?.isTeammate).toBe(true);
     expect(meta?.teamName).toBe("backend-team");
+  });
+
+  it("detects a teammate whose teamName first appears on a non-message record", async () => {
+    const meta = await parseMeta(
+      join(FIXTURES, "teammate-late-team-name.jsonl"),
+      "default",
+      TIER_STD,
+    );
+    expect(meta).not.toBeNull();
+    expect(meta?.isTeammate).toBe(true);
+    expect(meta?.teamName).toBe("session-74928b3e");
+  });
+
+  it("does not mark a plain session a teammate for quoting a teammate message", async () => {
+    const meta = await parseMeta(
+      join(FIXTURES, "quoted-teammate-message.jsonl"),
+      "default",
+      TIER_STD,
+    );
+    expect(meta).not.toBeNull();
+    expect(meta?.isTeammate).toBe(false);
+    expect(meta?.teamName).toBeNull();
+  });
+
+  it("does not mark the lead a teammate for receiving teammate messages", async () => {
+    const meta = await parseMeta(
+      join(FIXTURES, "team-lead-conversation.jsonl"),
+      "default",
+      TIER_STD,
+    );
+    expect(meta).not.toBeNull();
+    expect(meta?.isTeammate).toBe(false);
+    expect(meta?.teamName).toBeNull();
   });
 
   it("collects tool names", async () => {
