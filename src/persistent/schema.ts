@@ -28,7 +28,9 @@
 // leaving the tag as the title/preview.
 // v11: name_slots (JSON) on conversations + a reindex, so every session name is
 // resolved from the same five slots (see session-name.ts).
-export const SCHEMA_VERSION = 11;
+// v12: reindex only — a prompt sent mid-turn (a queued_command attachment) is
+// now a user message, which moves the message indexes after it.
+export const SCHEMA_VERSION = 12;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (

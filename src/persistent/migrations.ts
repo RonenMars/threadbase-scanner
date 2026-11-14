@@ -227,6 +227,26 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v11 → v12: no schema change — a reindex only. A prompt sent mid-turn is now
+  // a user message, so every index after one moves: stored counts and
+  // checkpoints (which snapshot a message index) were folded without it.
+  if (current >= 1 && current < 12 && tableExists(db, "conversation_files")) {
+    if (tableExists(db, "message_checkpoints")) db.exec("DELETE FROM message_checkpoints");
+    const assignments: string[] = [];
+    if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+      assignments.push("last_indexed_offset = 0");
+    }
+    if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+      assignments.push("last_indexed_line = 0");
+    }
+    if (hasColumn(db, "conversation_files", "reducer_state")) {
+      assignments.push("reducer_state = NULL");
+    }
+    if (assignments.length > 0) {
+      db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);
