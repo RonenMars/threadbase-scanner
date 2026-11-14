@@ -17,6 +17,25 @@ import type {
   TurnDuration,
 } from "./types";
 
+// A prompt the user sends while Claude is mid-turn is written only as a
+// queued_command attachment, never as a `user` row, so history would drop it.
+// Returns the `user` entry it stands for; every other entry, including the
+// task-notification and peer queued_commands, comes back unchanged.
+export function asQueuedPromptUserEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  if (entry.type !== "attachment") return entry;
+  const att = entry.attachment as
+    | { type?: string; commandMode?: string; origin?: { kind?: string }; prompt?: unknown }
+    | undefined;
+  if (att?.type !== "queued_command" || att.commandMode !== "prompt") return entry;
+  if (att.origin?.kind !== "human") return entry;
+  return {
+    ...entry,
+    type: "user",
+    attachment: undefined,
+    message: { role: "user", content: att.prompt },
+  };
+}
+
 // A claude-code `turn_duration` system line as a TurnDuration, else null.
 export function turnDurationOf(entry: Record<string, unknown>): TurnDuration | null {
   if (

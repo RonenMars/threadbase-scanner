@@ -1,4 +1,5 @@
 import {
+  asQueuedPromptUserEntry,
   extractTextContent,
   extractThinking,
   extractToolResultBlocks,
@@ -56,8 +57,9 @@ export function initialConvState(): ConvReducerState {
 // no message. Mutates `state` (header fields + cross-line maps).
 export function reduceConvLine(
   state: ConvReducerState,
-  entry: Record<string, unknown>,
+  rawEntry: Record<string, unknown>,
 ): ConversationMessage | null {
+  const entry = asQueuedPromptUserEntry(rawEntry);
   if (entry.cwd && !state.cwd) state.cwd = entry.cwd as string;
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
   state.nameSlots = applyClaudeNameEntry(state.nameSlots, entry);

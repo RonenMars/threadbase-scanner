@@ -1,5 +1,6 @@
 import { basename, dirname, join } from "path";
 import {
+  asQueuedPromptUserEntry,
   collectToolNames,
   extractTextContent,
   extractThinking,
@@ -87,9 +88,10 @@ export function initialReducerState(): ReducerState {
 // parseMeta. `entry` is the JSON.parse() of one non-empty line.
 export function reduceLine(
   state: ReducerState,
-  entry: Record<string, unknown>,
+  rawEntry: Record<string, unknown>,
   tier: ContentTier,
 ): void {
+  const entry = asQueuedPromptUserEntry(rawEntry);
   if (entry.cwd && !state.cwd) state.cwd = entry.cwd as string;
   if (entry.sessionId && !state.sessionId) state.sessionId = entry.sessionId as string;
   state.nameSlots = applyClaudeNameEntry(state.nameSlots, entry);
