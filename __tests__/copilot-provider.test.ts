@@ -109,7 +109,7 @@ describe("CopilotProvider parsing", () => {
       join(FIXTURES, "session-with-tools.jsonl"),
       "copilot",
     );
-    expect(convo?.messages).toHaveLength(3);
+    expect(convo?.messages).toHaveLength(4);
     const step = convo?.messages[1];
     expect(step?.role).toBe("assistant");
     expect(step?.text).toBe("");
@@ -217,14 +217,49 @@ describe("Copilot line parser and search document", () => {
     .split("\n")
     .filter(Boolean);
 
-  it("maps only user.message and assistant.message lines to messages", () => {
+  it("maps only prompts, replies and tool results to messages", () => {
     const mapped = lines.filter((l) => parseCopilotJsonlLine(l) !== null);
     expect(mapped.map((l) => JSON.parse(l).type)).toEqual([
       "user.message",
       "assistant.message",
+      "tool.execution_complete",
       "assistant.message",
     ]);
     expect(lines.length).toBeGreaterThan(mapped.length);
+  });
+
+  it("maps tool.execution_complete to a tool result, so an ask_user answer reaches the chat", () => {
+    const answer = JSON.stringify({
+      type: "tool.execution_complete",
+      data: {
+        toolCallId: "call-ask",
+        success: true,
+        result: { content: "User responded: color=green" },
+      },
+      id: "evt-answer",
+      timestamp: "2026-01-01T12:00:30.000Z",
+      parentId: null,
+    });
+    expect(parseCopilotJsonlLine(answer)).toEqual({
+      role: "user",
+      text: "",
+      timestamp: "2026-01-01T12:00:30.000Z",
+      uuid: "evt-answer",
+      isToolResult: true,
+      metadata: {
+        toolResults: [
+          {
+            toolUseId: "call-ask",
+            type: "generic",
+            content: { output: "User responded: color=green" },
+          },
+        ],
+      },
+    });
+    const failed = parseCopilotJsonlLine(answer.replace('"success":true', '"success":false'));
+    expect(failed?.metadata?.toolResults?.[0]?.isError).toBe(true);
+    // No toolCallId means nothing to attach the result to.
+    expect(parseCopilotJsonlLine(answer.replace("call-ask", ""))).toBeNull();
   });
 
   it("uses Copilot's messageId as the message uuid", () => {

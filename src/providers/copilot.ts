@@ -28,12 +28,15 @@ import {
 // Every line is `{ type, data, id, timestamp, parentId }` (verified on Copilot
 // CLI 1.0.81 through 1.0.92).
 //
-// Only three event types are read:
+// Four event types are read:
 //   session.start      data.sessionId, data.context.cwd, data.context.branch
 //   user.message       data.content — the prompt as typed. data.transformedContent
 //                      is the same prompt wrapped in <current_datetime> /
 //                      <system_reminder> blocks for the model, so it is not used.
 //   assistant.message  data.content, data.toolRequests[], data.model
+//   tool.execution_complete  data.toolCallId, data.result.content — the tool's
+//                      output, and for `ask_user` the answer ("User responded: …"),
+//                      which is written nowhere else.
 //
 // Everything else is ignored, and for `model.*` that is load-bearing:
 // model.message / model.response / model.messages_snapshot carry `role` and
@@ -62,6 +65,7 @@ export interface CopilotAccumulator {
 const SESSION_START = "session.start";
 const USER_MESSAGE = "user.message";
 const ASSISTANT_MESSAGE = "assistant.message";
+const TOOL_EXECUTION_COMPLETE = "tool.execution_complete";
 
 export class CopilotProvider implements ScannerProvider<CopilotAccumulator> {
   readonly name = COPILOT_PROVIDER;
@@ -201,11 +205,34 @@ function copilotEntryToMessage(entry: Record<string, unknown>): ConversationMess
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
   }
+  if (entry.type === TOOL_EXECUTION_COMPLETE) {
+    const toolUseId = asString(data.toolCallId);
+    if (!toolUseId) return null;
+    const result = asRecord(data.result);
+    const output = asString(result?.content) || asString(result?.detailedContent);
+    return {
+      role: "user",
+      text: "",
+      timestamp,
+      uuid: asString(entry.id) || undefined,
+      isToolResult: true,
+      metadata: {
+        toolResults: [
+          {
+            toolUseId,
+            type: "generic",
+            content: { output },
+            ...(data.success === false ? { isError: true } : {}),
+          },
+        ],
+      },
+    };
+  }
   return null;
 }
 
 // Stateless line → message mapping, for a host tailing appended lines. Returns
-// null for every event that is not a user prompt or an assistant message.
+// null for every event that is not a prompt, an assistant message or a tool result.
 export function parseCopilotJsonlLine(line: string): ConversationMessage | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
