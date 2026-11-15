@@ -81,7 +81,7 @@ describe("persistent SQLite Copilot indexing", () => {
     await scanner.scan(scanOptions());
 
     const byPath = await scanner.getConversation(toolsPath);
-    expect(byPath?.messages).toHaveLength(3);
+    expect(byPath?.messages).toHaveLength(5);
 
     const bySession = await scanner.getConversation(BASIC_ID);
     expect(bySession?.messages).toHaveLength(2);
@@ -158,7 +158,7 @@ describe("persistent SQLite Copilot indexing", () => {
   it("parseSingleFilePage sniffs a Copilot file with no index row", async () => {
     const scanner = newScanner();
     const page = await scanner.parseSingleFilePage(toolsPath, undefined, { limit: 50 });
-    expect(page?.total).toBe(3);
+    expect(page?.total).toBe(5);
     expect(page?.conversation.sessionId).toBe(TOOLS_ID);
     scanner.close();
   });

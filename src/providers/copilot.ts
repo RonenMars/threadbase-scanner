@@ -28,12 +28,24 @@ import {
 // Every line is `{ type, data, id, timestamp, parentId }` (verified on Copilot
 // CLI 1.0.81 through 1.0.92).
 //
-// Only three event types are read:
+// Five event types are read:
 //   session.start      data.sessionId, data.context.cwd, data.context.branch
 //   user.message       data.content — the prompt as typed. data.transformedContent
 //                      is the same prompt wrapped in <current_datetime> /
 //                      <system_reminder> blocks for the model, so it is not used.
 //   assistant.message  data.content, data.toolRequests[], data.model
+//   tool.execution_complete  data.toolCallId, data.result.content — the tool's
+//                      output, and for `ask_user` the answer ("User responded: …"),
+//                      which is written nowhere else.
+//   permission.completed  data.toolCallId, data.result.kind (+ .feedback) — the answer
+//                      to an approval card (Yes / don't ask again / No + feedback / Esc),
+//                      which is written nowhere else. It shares its toolCallId with the
+//                      tool.execution_complete that follows when the tool then runs, so
+//                      a tool call can have two results: the decision first, the output
+//                      after. They stay two messages (own uuid) under the same toolUseId,
+//                      which is how a host keeps each under the command it gates, and the
+//                      decision's content carries `permission: <kind>` so it can be told
+//                      apart from the output.
 //
 // Everything else is ignored, and for `model.*` that is load-bearing:
 // model.message / model.response / model.messages_snapshot carry `role` and
@@ -62,6 +74,17 @@ export interface CopilotAccumulator {
 const SESSION_START = "session.start";
 const USER_MESSAGE = "user.message";
 const ASSISTANT_MESSAGE = "assistant.message";
+const TOOL_EXECUTION_COMPLETE = "tool.execution_complete";
+const PERMISSION_COMPLETED = "permission.completed";
+
+// kind -> what the chat shows. Kinds are from copilot-cli-questions.md; an
+// unlisted kind maps to nothing rather than to a guess.
+const PERMISSION_DECISIONS: Record<string, { label: string; isError: boolean }> = {
+  approved: { label: "Approved", isError: false },
+  "approved-for-location": { label: "Approved (and remembered)", isError: false },
+  "denied-interactively-by-user": { label: "Denied", isError: true },
+  cancelled: { label: "Cancelled", isError: true },
+};
 
 export class CopilotProvider implements ScannerProvider<CopilotAccumulator> {
   readonly name = COPILOT_PROVIDER;
@@ -201,11 +224,48 @@ function copilotEntryToMessage(entry: Record<string, unknown>): ConversationMess
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
   }
+  if (entry.type === TOOL_EXECUTION_COMPLETE) {
+    const toolUseId = asString(data.toolCallId);
+    if (!toolUseId) return null;
+    const result = asRecord(data.result);
+    const output = asString(result?.content) || asString(result?.detailedContent);
+    return toolResultMessage(entry, toolUseId, { output }, data.success === false);
+  }
+  if (entry.type === PERMISSION_COMPLETED) {
+    const toolUseId = asString(data.toolCallId);
+    const result = asRecord(data.result);
+    const kind = asString(result?.kind);
+    const decision = Object.hasOwn(PERMISSION_DECISIONS, kind) ? PERMISSION_DECISIONS[kind] : null;
+    if (!toolUseId || !decision) return null;
+    const feedback =
+      kind === "denied-interactively-by-user" ? asString(result?.feedback).trim() : "";
+    const output = feedback ? `${decision.label}: ${feedback}` : decision.label;
+    return toolResultMessage(entry, toolUseId, { output, permission: kind }, decision.isError);
+  }
   return null;
 }
 
+function toolResultMessage(
+  entry: Record<string, unknown>,
+  toolUseId: string,
+  content: Record<string, unknown>,
+  isError: boolean,
+): ConversationMessage {
+  return {
+    role: "user",
+    text: "",
+    timestamp: asString(entry.timestamp),
+    uuid: asString(entry.id) || undefined,
+    isToolResult: true,
+    metadata: {
+      toolResults: [{ toolUseId, type: "generic", content, ...(isError ? { isError } : {}) }],
+    },
+  };
+}
+
 // Stateless line → message mapping, for a host tailing appended lines. Returns
-// null for every event that is not a user prompt or an assistant message.
+// null for every event that is not a prompt, an assistant message, a tool result
+// or a permission decision.
 export function parseCopilotJsonlLine(line: string): ConversationMessage | null {
   const trimmed = line.trim();
   if (!trimmed) return null;

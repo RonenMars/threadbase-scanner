@@ -109,7 +109,7 @@ describe("CopilotProvider parsing", () => {
       join(FIXTURES, "session-with-tools.jsonl"),
       "copilot",
     );
-    expect(convo?.messages).toHaveLength(3);
+    expect(convo?.messages).toHaveLength(5);
     const step = convo?.messages[1];
     expect(step?.role).toBe("assistant");
     expect(step?.text).toBe("");
@@ -217,14 +217,181 @@ describe("Copilot line parser and search document", () => {
     .split("\n")
     .filter(Boolean);
 
-  it("maps only user.message and assistant.message lines to messages", () => {
+  it("maps only prompts, replies and tool results to messages", () => {
     const mapped = lines.filter((l) => parseCopilotJsonlLine(l) !== null);
     expect(mapped.map((l) => JSON.parse(l).type)).toEqual([
       "user.message",
       "assistant.message",
+      "permission.completed",
+      "tool.execution_complete",
       "assistant.message",
     ]);
     expect(lines.length).toBeGreaterThan(mapped.length);
+  });
+
+  it("maps tool.execution_complete to a tool result, so an ask_user answer reaches the chat", () => {
+    const answer = JSON.stringify({
+      type: "tool.execution_complete",
+      data: {
+        toolCallId: "call-ask",
+        success: true,
+        result: { content: "User responded: color=green" },
+      },
+      id: "evt-answer",
+      timestamp: "2026-01-01T12:00:30.000Z",
+      parentId: null,
+    });
+    expect(parseCopilotJsonlLine(answer)).toEqual({
+      role: "user",
+      text: "",
+      timestamp: "2026-01-01T12:00:30.000Z",
+      uuid: "evt-answer",
+      isToolResult: true,
+      metadata: {
+        toolResults: [
+          {
+            toolUseId: "call-ask",
+            type: "generic",
+            content: { output: "User responded: color=green" },
+          },
+        ],
+      },
+    });
+    // content is the output; detailedContent only stands in when it is empty.
+    const withDetail = (content: string) =>
+      parseCopilotJsonlLine(
+        answer.replace(
+          '"result":{"content":"User responded: color=green"}',
+          `"result":{"content":"${content}","detailedContent":"full output"}`,
+        ),
+      )?.metadata?.toolResults?.[0]?.content.output;
+    expect(withDetail("short")).toBe("short");
+    expect(withDetail("")).toBe("full output");
+    const failed = parseCopilotJsonlLine(answer.replace('"success":true', '"success":false'));
+    expect(failed?.metadata?.toolResults?.[0]?.isError).toBe(true);
+    // No toolCallId means nothing to attach the result to.
+    expect(parseCopilotJsonlLine(answer.replace("call-ask", ""))).toBeNull();
+  });
+
+  describe("permission.completed", () => {
+    const decision = (result: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        type: "permission.completed",
+        data: {
+          requestId: "00000000-0000-4000-8000-0000000000b1",
+          toolCallId: "call-shell",
+          result,
+          decisionSource: "human_response",
+          ...extra,
+        },
+        id: "evt-decision",
+        timestamp: "2026-01-01T12:00:31.000Z",
+        parentId: null,
+      });
+    const toolResult = (line: string) => parseCopilotJsonlLine(line)?.metadata?.toolResults?.[0];
+
+    it.each([
+      [{ kind: "approved" }, "Approved", false],
+      [
+        { kind: "approved-for-location", approval: { kind: "commands" }, locationKey: "/x" },
+        "Approved (and remembered)",
+        false,
+      ],
+      [{ kind: "denied-interactively-by-user" }, "Denied", true],
+      [
+        { kind: "denied-interactively-by-user", feedback: "use mkdir instead" },
+        "Denied: use mkdir instead",
+        true,
+      ],
+      [{ kind: "cancelled", reason: "Session aborted" }, "Cancelled", true],
+    ])("maps %j to %s", (result, output, isError) => {
+      const message = parseCopilotJsonlLine(decision(result));
+      expect(message).toEqual({
+        role: "user",
+        text: "",
+        timestamp: "2026-01-01T12:00:31.000Z",
+        uuid: "evt-decision",
+        isToolResult: true,
+        metadata: {
+          toolResults: [
+            {
+              toolUseId: "call-shell",
+              type: "generic",
+              content: { output, permission: result.kind },
+              ...(isError ? { isError: true } : {}),
+            },
+          ],
+        },
+      });
+    });
+
+    it("trims denial feedback, treats a blank one as none, and ignores feedback on other kinds", () => {
+      const denied = (feedback: string) => ({ kind: "denied-interactively-by-user", feedback });
+      expect(toolResult(decision(denied("  use mkdir  ")))?.content.output).toBe(
+        "Denied: use mkdir",
+      );
+      expect(toolResult(decision(denied("  ")))?.content.output).toBe("Denied");
+      expect(toolResult(decision({ kind: "approved", feedback: "x" }))?.content.output).toBe(
+        "Approved",
+      );
+      expect(toolResult(decision({ kind: "cancelled", feedback: "x" }))?.content.output).toBe(
+        "Cancelled",
+      );
+    });
+
+    it("does not take Object.prototype keys for a decision kind, and never throws", () => {
+      const provider = new CopilotProvider();
+      const acc = provider.createEmptyAccumulator();
+      for (const kind of ["constructor", "toString", "__proto__", "example kind", ""]) {
+        const line = decision({ kind });
+        expect(parseCopilotJsonlLine(line), kind).toBeNull();
+        // The reducer calls the mapper directly, with no try/catch around it.
+        expect(() => provider.reduceEntry(acc, JSON.parse(line), TIER), kind).not.toThrow();
+      }
+    });
+
+    it("returns null for an unknown kind, a missing kind or a missing toolCallId", () => {
+      expect(parseCopilotJsonlLine(decision({ kind: "example kind" }))).toBeNull();
+      expect(parseCopilotJsonlLine(decision({}))).toBeNull();
+      expect(parseCopilotJsonlLine(decision({ kind: "approved" }, { toolCallId: "" }))).toBeNull();
+      expect(
+        parseCopilotJsonlLine(decision({ kind: "approved" }, { result: "approved" })),
+      ).toBeNull();
+    });
+
+    it("keeps the decision and the command output as two results for one tool call", () => {
+      const run = JSON.stringify({
+        type: "tool.execution_complete",
+        data: { toolCallId: "call-shell", success: true, result: { content: "README.md" } },
+        id: "evt-run",
+        timestamp: "2026-01-01T12:00:32.000Z",
+        parentId: null,
+      });
+      const approved = parseCopilotJsonlLine(decision({ kind: "approved" }));
+      const ran = parseCopilotJsonlLine(run);
+      // Same tool_use id on purpose (each lands under the command it gates), but
+      // two messages with their own uuid, so neither replaces the other.
+      expect(approved?.metadata?.toolResults?.[0]?.toolUseId).toBe("call-shell");
+      expect(ran?.metadata?.toolResults?.[0]?.toolUseId).toBe("call-shell");
+      expect(approved?.uuid).not.toBe(ran?.uuid);
+      expect(approved?.metadata?.toolResults?.[0]?.content.output).toBe("Approved");
+      expect(ran?.metadata?.toolResults?.[0]?.content.output).toBe("README.md");
+      // Only the decision carries the marker a host can tell it apart by.
+      expect(ran?.metadata?.toolResults?.[0]?.content).not.toHaveProperty("permission");
+    });
+
+    it("adds no text, no message count and nothing to the search document", () => {
+      const provider = new CopilotProvider();
+      const acc = provider.createEmptyAccumulator();
+      provider.reduceEntry(acc, event("user.message", { content: "run it" }), TIER);
+      const before = JSON.stringify(acc);
+      provider.reduceEntry(acc, JSON.parse(decision({ kind: "approved" })), TIER);
+      expect(JSON.stringify(acc)).toBe(before);
+      const delta = extractSearchDelta(
+        JSON.parse(decision({ kind: "denied-interactively-by-user", feedback: "secret feedback" })),
+      );
+      expect(delta).toEqual({ text: "", thinking: "", tools: "" });
+    });
   });
 
   it("uses Copilot's messageId as the message uuid", () => {
