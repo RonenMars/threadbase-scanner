@@ -377,6 +377,31 @@ npm run build     # build ESM + CJS + types
 npm run lint      # type check
 ```
 
+### Capturing live Copilot events
+
+The Copilot parser was written against a hand-sanitized fixture.
+`scripts/capture-copilot-events.mjs` turns a real session into a safe fixture and reports the shapes the parser still has to confirm.
+
+1. Start one Copilot CLI session and, in it, do all of these:
+   - answer an `ask_user` question;
+   - approve a shell command;
+   - deny a shell command and type feedback;
+   - cancel a prompt with Esc, if the CLI allows it.
+2. Run the script on that session's `events.jsonl` (under the Copilot home's `session-state/<session id>/`; a session directory works too).
+   The script never scans for sessions itself, makes no network call, and writes only under `__fixtures__/copilot/live/`.
+   ```bash
+   node scripts/capture-copilot-events.mjs <path to events.jsonl> --out __fixtures__/copilot/live/<name>.jsonl
+   ```
+3. Read the `REVIEW BEFORE COMMIT` notice it prints, then skim the output file.
+   Ids, home paths, usernames, hostnames, emails and token-shaped strings are redacted; free text you typed is kept as is.
+4. Print the shape report:
+   ```bash
+   node scripts/capture-copilot-events.mjs __fixtures__/copilot/live/<name>.jsonl --report
+   ```
+5. Paste the report output, not the raw file, back to the maintainer.
+
+`npm test` runs every `*.jsonl` in that directory through the real parser (`__tests__/copilot-live-fixtures.test.ts`) and is skipped while there are none.
+
 ## Contributing
 
 Small bugfixes and parser improvements are welcome. For design changes, please open an issue first to discuss the shape before opening a PR.
