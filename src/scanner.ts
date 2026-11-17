@@ -1187,9 +1187,22 @@ export class ConversationScanner {
     try {
       const fd = openSync(filePath, "r");
       try {
-        const buf = Buffer.alloc(8192);
-        const n = readSync(fd, buf, 0, buf.length, 0);
-        sample = buf.subarray(0, n).toString("utf8");
+        // A provider recognises a file by a whole line, and line 1 is not
+        // short: since 0.167 Codex puts its base instructions in `session_meta`
+        // (22.7 KB on 0.169). A fixed 8 KB sample held no complete line, so a
+        // rollout nobody had scanned yet was parsed as Threadbase, to nothing.
+        // ponytail: stops at 1 MB of line 1; a longer one stays unrecognised.
+        const chunks: Buffer[] = [];
+        let pos = 0;
+        while (pos < 1024 * 1024) {
+          const chunk = Buffer.alloc(8192);
+          const n = readSync(fd, chunk, 0, chunk.length, pos);
+          if (n === 0) break;
+          chunks.push(chunk.subarray(0, n));
+          pos += n;
+          if (chunk.subarray(0, n).includes(0x0a)) break;
+        }
+        sample = Buffer.concat(chunks).toString("utf8");
       } finally {
         closeSync(fd);
       }

@@ -5,7 +5,16 @@
 // from the in-memory index, turning a conversation that exists on disk into a
 // "not found". The Claude cases here are the control: they must keep working
 // through the untouched parseConversation/parseMeta path.
-import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync } from "fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,6 +28,21 @@ function codexTurn(text: string, second: number): string {
     type: "response_item",
     payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
   })}\n`;
+}
+
+/**
+ * Give the rollout the first line a current Codex writes. Since 0.167 the
+ * `session_meta` line carries the base instructions, so it is far longer than
+ * the 8 KB the provider probe used to read (22 727 bytes on Codex 0.169.0, of
+ * which `payload.base_instructions.text` is 21 524).
+ */
+function withLongSessionMeta(file: string): void {
+  const [first, ...rest] = readFileSync(file, "utf8").split("\n");
+  const meta = JSON.parse(first);
+  meta.payload.base_instructions = { text: "x".repeat(21_524) };
+  const line = JSON.stringify(meta);
+  expect(Buffer.byteLength(line)).toBeGreaterThan(8192);
+  writeFileSync(file, [line, ...rest].join("\n"));
 }
 
 function claudeTurn(text: string, uuid: string): string {
@@ -72,6 +96,13 @@ describe("provider resolution on the single-file paths", () => {
       expect(page?.messages.map((m) => m.text)).toEqual(["and to reverse a string?"]);
     });
 
+    it("parses a Codex rollout whose first line is longer than 8 KB", async () => {
+      withLongSessionMeta(codexFile);
+      const page = await scanner.parseSingleFilePage(codexFile, "codex", { limit: 10 });
+      expect(page?.total).toBe(4);
+      expect(page?.messages[0]?.text).toBe("How do I reverse a list in Python?");
+    });
+
     it("still parses a Claude transcript", async () => {
       const page = await scanner.parseSingleFilePage(claudeFile, "default", { limit: 10 });
       expect(page?.total).toBe(1);
@@ -97,6 +128,21 @@ describe("provider resolution on the single-file paths", () => {
       expect(meta?.provider).toBe("codex-cli");
       expect(meta?.messageCount).toBe(5);
       expect((await scanner.getConversation("sess-basic-0001"))?.messages).toHaveLength(5);
+    });
+
+    it("indexes a Codex rollout it has never seen", async () => {
+      const meta = await scanner.refreshFile(codexFile);
+      expect(meta?.provider).toBe("codex-cli");
+      expect(meta?.messageCount).toBe(4);
+    });
+
+    // A session bound mid-run is refreshed before any scan has classified its
+    // file, so the probe is the only thing that can say it is Codex.
+    it("indexes a never-seen Codex rollout whose first line is longer than 8 KB", async () => {
+      withLongSessionMeta(codexFile);
+      const meta = await scanner.refreshFile(codexFile);
+      expect(meta?.provider).toBe("codex-cli");
+      expect(meta?.messageCount).toBe(4);
     });
 
     it("still refreshes a Claude transcript", async () => {
