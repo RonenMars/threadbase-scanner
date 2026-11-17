@@ -416,7 +416,10 @@ describe("Copilot line parser and search document", () => {
 
 describe("Copilot fixtures are sanitized", () => {
   it("contain no home path, user name, email or real model name", () => {
-    const files = readdirSync(FIXTURES);
+    // `live/` holds raw-shaped captures with their own check (copilot-live-fixtures.test.ts).
+    const files = readdirSync(FIXTURES, { withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => e.name);
     expect(files.length).toBeGreaterThan(0);
     // Positive control: the pattern does match the things it is meant to catch.
     const forbidden =
