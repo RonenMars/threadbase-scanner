@@ -8,7 +8,7 @@ import {
   hasImageBlocks,
   isOnlyToolResultContent,
   parseTeammateMessageTag,
-} from "../parser";
+} from "../parse-helpers";
 import type { NameSlots } from "../session-name";
 import type {
   AttachmentSidecar,

@@ -292,6 +292,26 @@ await scan({
 })
 ```
 
+### Parse only
+
+To turn Claude messages into `ConversationMessage`s without the scanner, import the `parse` entry.
+It loads no native module (`better-sqlite3`), no watcher or logger, and no Node file APIs.
+The input is one transcript JSONL line, or an Agent SDK message of the same shape serialized with `JSON.stringify`.
+
+```typescript
+import { createJsonlParseState, parseJsonlLine } from '@threadbase-sh/scanner/parse'
+
+// One state per conversation: it pairs each tool_result with its tool_use,
+// so the result gets its tool's type (`bash`, `edit`, …) instead of `generic`.
+const state = createJsonlParseState()
+for (const line of lines) {
+  const message = parseJsonlLine(line, state) // null for rows that are not messages
+  if (message) render(message)
+}
+```
+
+The names and types match the root entry, so code can switch between the two imports without other changes.
+
 ## CLI Usage
 
 ```bash

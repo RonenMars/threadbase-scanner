@@ -2,8 +2,12 @@ import { defineConfig } from "tsup";
 
 export default defineConfig([
   {
-    entry: ["src/index.ts"],
+    entry: ["src/index.ts", "src/parse.ts"],
     format: ["esm", "cjs"],
+    // Each entry self-contained: no shared chunk, so `dist/parse.js` never
+    // pulls in a file the root entry also loads, and `dist/index.js` keeps its
+    // single-file shape.
+    splitting: false,
     // TypeScript 7's native compiler no longer exposes the JS Compiler API
     // (`ts.sys`), which tsup 8.5's bundled rollup-plugin-dts@6.1.1 reads.
     // Declarations come from `tsc -p tsconfig.build.json` in the build script.
