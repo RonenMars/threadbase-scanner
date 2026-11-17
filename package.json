@@ -53,7 +53,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json && node scripts/check-parse-entry.mjs",
+    "build": "tsup && tsc -p tsconfig.build.json && node scripts/fix-dts-specifiers.mjs && node scripts/check-parse-entry.mjs",
     "prepare": "npm run build",
     "dev": "tsup --watch",
     "test": "vitest run",
