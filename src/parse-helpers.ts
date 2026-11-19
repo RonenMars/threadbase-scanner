@@ -20,9 +20,23 @@ export function asQueuedPromptUserEntry(entry: Record<string, unknown>): Record<
   };
 }
 
+// A typed slash command is stored as <command-name>/x</command-name> plus
+// <command-args>…</command-args>, and the args are where the user's real prompt
+// lives (`/plan <prompt>`). cleanSystemTags strips both tags, which emptied the
+// line and dropped the session's first prompt from history. Rebuild what was typed.
+const COMMAND_RE = /^\s*<command-name>([\s\S]*?)<\/command-name>/;
+const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
+
+function cleanText(text: string): string {
+  const name = text.match(COMMAND_RE)?.[1]?.trim();
+  const args = name ? text.match(COMMAND_ARGS_RE)?.[1]?.trim() : undefined;
+  // A bare command (/compact, /clear) carries no prompt and stays hidden.
+  return name && args ? `${name} ${args}` : cleanSystemTags(text);
+}
+
 export function extractTextContent(content: unknown): string {
   if (!content) return "";
-  if (typeof content === "string") return cleanSystemTags(content);
+  if (typeof content === "string") return cleanText(content);
   if (Array.isArray(content)) {
     return content
       .map((item) => {
@@ -32,7 +46,7 @@ export function extractTextContent(content: unknown): string {
         return "";
       })
       .filter(Boolean)
-      .map(cleanSystemTags)
+      .map(cleanText)
       .join(" ");
   }
   return "";
