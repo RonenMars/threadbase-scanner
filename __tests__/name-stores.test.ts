@@ -75,6 +75,15 @@ describe("readCodexNameSlots", () => {
     });
   });
 
+  // Real Codex 0.171.0 capture: auto-title "Reply with pong", then `/rename tbexp-user-name`.
+  // Both lines have the same shape, so a user rename cannot be told from a generated title.
+  it("files even a user /rename as toolTitle, never userTitle", () => {
+    const home = join(__dirname, "../__fixtures__/codex-cli/rename-home");
+    const slots = readCodexNameSlots(home, "01a1fd7f-c3e6-78f3-9914-2885188f9cd0");
+    expect(slots.toolTitle).toBe("tbexp-user-name");
+    expect(slots).not.toHaveProperty("userTitle");
+  });
+
   it("yields {} when nothing exists", () => {
     expect(readCodexNameSlots(dir, ID)).toEqual({});
     expect(readCodexNameSlots(join(dir, "missing"), ID)).toEqual({});

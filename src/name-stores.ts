@@ -79,6 +79,9 @@ function lastValueById(path: string, idField: string, valueField: string): Map<s
 
 // `codexHome` is the directory holding session_index.jsonl, history.jsonl and
 // state_5.sqlite (normally ~/.codex).
+// userTitle is intentionally never set: Codex (0.171.0) writes a user /rename and
+// its own generated title through the same thread/name/set path into the same
+// fields, with no source marker, so its name is only ever a toolTitle.
 export function readCodexNameSlots(codexHome: string, id: string): NameSlots {
   const index = lastValueById(join(codexHome, "session_index.jsonl"), "id", "thread_name");
   const history = lastValueById(join(codexHome, "history.jsonl"), "session_id", "text");
