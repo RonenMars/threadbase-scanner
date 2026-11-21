@@ -6,7 +6,7 @@ export {
   applySinceFilter,
   applySort,
 } from "./filters";
-export { readGitBranch } from "./git";
+export { type ProjectRoot, readGitBranch, readProjectRoot } from "./git";
 export { SearchIndexer } from "./indexer";
 export type { Logger, LoggerOptions } from "./logger";
 export { createLogger, getLogger, setLogger } from "./logger";

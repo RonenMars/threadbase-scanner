@@ -67,6 +67,13 @@ export interface ConversationMeta {
   preview: string;
   contentSnippet: string;
   gitBranch: string | null;
+  // The main checkout of the repo projectPath belongs to (a linked worktree's
+  // projectPath differs from it). Undefined when projectPath has no readable
+  // .git, so a host keeps grouping by projectPath.
+  projectRoot?: string | null;
+  // projectPath itself when it is a linked worktree of projectRoot; null for a
+  // main checkout or a submodule. Undefined whenever projectRoot is.
+  worktreePath?: string | null;
   model: string | null;
   isSubagent: boolean;
   // NOTE: despite the name, this holds the parent's JSONL FILE PATH, not an id
