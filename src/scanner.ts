@@ -979,6 +979,11 @@ export class ConversationScanner {
     return new Map(this.searchContents);
   }
 
+  /** One conversation's in-memory search body, or undefined when none is held. */
+  getSearchContent(id: string): string | undefined {
+    return this.searchContents.get(id);
+  }
+
   /**
    * Preload search bodies (ids → body) before scan(), so statCache hits index
    * a real body. Existing entries win: they come from a fresher parse.
