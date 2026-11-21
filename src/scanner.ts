@@ -14,7 +14,7 @@ import {
   applySort,
   parseSinceCutoff,
 } from "./filters";
-import { readGitBranch } from "./git";
+import { memoByPath, readGitBranch, readProjectRoot } from "./git";
 import { SearchIndexer } from "./indexer";
 import { getLogger } from "./logger";
 import { setCursorStateDb } from "./name-stores";
@@ -383,6 +383,7 @@ export class ConversationScanner {
       }
       return branch;
     };
+    const resolveRoot = memoByPath(readProjectRoot);
     const { statCache } = options;
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
@@ -418,6 +419,7 @@ export class ConversationScanner {
             if (meta && meta.gitBranch === null && meta.projectPath) {
               meta.gitBranch = resolveGitBranch(meta.projectPath);
             }
+            if (meta) Object.assign(meta, resolveRoot(meta.projectPath));
             return { meta, searchContent: capForMemory(doc, tier.snippetMax) };
           } catch (err) {
             parseFailures++;
@@ -720,6 +722,7 @@ export class ConversationScanner {
       return null;
     }
     meta.gitBranch = readGitBranch(meta.projectPath);
+    Object.assign(meta, readProjectRoot(meta.projectPath));
     const index: InMemoryPageIndex = {
       size: stat.size,
       mtimeMs: stat.mtimeMs,
@@ -903,6 +906,7 @@ export class ConversationScanner {
     }
 
     meta.gitBranch = readGitBranch(meta.projectPath);
+    Object.assign(meta, readProjectRoot(meta.projectPath));
 
     // A re-parse can change the sessionId mapping; clear the old entry first so
     // we don't leave this file listed under a stale sessionId.

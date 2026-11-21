@@ -247,6 +247,33 @@ export function runMigrations(db: Database): void {
     }
   }
 
+  // v12 → v13: project_root + worktree_path columns and a reindex. Rows indexed
+  // before it have neither, and a finished transcript is never appended to, so
+  // only a reparse from offset 0 can fill them. Checkpoints go too, as in v12.
+  if (current >= 1 && current < 13 && tableExists(db, "conversations")) {
+    for (const column of ["project_root", "worktree_path"]) {
+      if (!hasColumn(db, "conversations", column)) {
+        db.exec(`ALTER TABLE conversations ADD COLUMN ${column} TEXT`);
+      }
+    }
+    if (tableExists(db, "message_checkpoints")) db.exec("DELETE FROM message_checkpoints");
+    if (tableExists(db, "conversation_files")) {
+      const assignments: string[] = [];
+      if (hasColumn(db, "conversation_files", "last_indexed_offset")) {
+        assignments.push("last_indexed_offset = 0");
+      }
+      if (hasColumn(db, "conversation_files", "last_indexed_line")) {
+        assignments.push("last_indexed_line = 0");
+      }
+      if (hasColumn(db, "conversation_files", "reducer_state")) {
+        assignments.push("reducer_state = NULL");
+      }
+      if (assignments.length > 0) {
+        db.exec(`UPDATE conversation_files SET ${assignments.join(", ")}`);
+      }
+    }
+  }
+
   // Fresh DB and re-runs both no-op safely (CREATE ... IF NOT EXISTS). Creates
   // any missing tables/indexes, including the new provider indexes.
   db.exec(SCHEMA_SQL);

@@ -375,6 +375,8 @@ Every scanned conversation produces a `ConversationMeta` with the full superset 
 | `preview` | string | All (tier-dependent) |
 | `contentSnippet` | string | Electron/VS Code/IntelliJ (tier-dependent) |
 | `gitBranch` | string \| null | IntelliJ/CLI |
+| `projectRoot` | string \| null (optional) | — |
+| `worktreePath` | string \| null (optional) | — |
 | `model` | string \| null | IntelliJ |
 | `isSubagent` | boolean | VS Code |
 | `parentSessionId` | string \| null | VS Code |
@@ -442,7 +444,7 @@ src/
   indexer.ts      FlexSearch-based search indexing
   filters.ts      Sort, since-filter, include, pagination
   cache.ts        LRU cache
-  git.ts          Git branch detection
+  git.ts          Git branch detection, project root / linked-worktree resolution
   profiles.ts     Profile management
   tags.ts         System tag cleaning
   tiers.ts        Content tier definitions

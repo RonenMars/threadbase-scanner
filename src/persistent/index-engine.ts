@@ -1,6 +1,6 @@
 import { statSync } from "fs";
 import { canonicalPath } from "../canonical-path";
-import { readGitBranch } from "../git";
+import { memoByPath, type ProjectRoot, readGitBranch, readProjectRoot } from "../git";
 import { getLogger } from "../logger";
 import { nameStoreSlotsFor } from "../name-stores";
 import { getProjectsDir } from "../profiles";
@@ -160,6 +160,8 @@ export class PersistentEngine {
       return branch;
     };
 
+    const resolveRoot = memoByPath(readProjectRoot);
+
     for (let i = 0; i < discovered.length; i += BATCH_SIZE) {
       const batch = discovered.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
@@ -172,6 +174,7 @@ export class PersistentEngine {
             resolveGitBranch,
             false,
             provider,
+            resolveRoot,
           );
           return meta;
         }),
@@ -232,6 +235,7 @@ export class PersistentEngine {
     resolveGitBranch: (projectPath: string) => string | null,
     force = false,
     provider?: ScannerProvider,
+    resolveRoot: (projectPath: string) => ProjectRoot | null = readProjectRoot,
   ): Promise<{ meta: ConversationMeta | null; change: FileChange }> {
     const log = getLogger();
     const tier = resolveTier(tierName, customTiers);
@@ -290,6 +294,7 @@ export class PersistentEngine {
         tier,
         stat,
         resolveGitBranch,
+        resolveRoot,
       );
       return { meta, change };
     }
@@ -326,6 +331,7 @@ export class PersistentEngine {
       return { meta: null, change };
     }
     meta.gitBranch = resolveGitBranch(meta.projectPath);
+    Object.assign(meta, resolveRoot(meta.projectPath));
 
     const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
     const fileId = this.files.ensure(filePath, account);
@@ -398,6 +404,7 @@ export class PersistentEngine {
     tier: ReturnType<typeof resolveTier>,
     stat: { size: number; mtimeMs: number },
     resolveGitBranch: (projectPath: string) => string | null,
+    resolveRoot: (projectPath: string) => ProjectRoot | null,
   ): Promise<ConversationMeta | null> {
     const log = getLogger();
 
@@ -416,6 +423,7 @@ export class PersistentEngine {
     if (meta.gitBranch === null && meta.projectPath) {
       meta.gitBranch = resolveGitBranch(meta.projectPath);
     }
+    Object.assign(meta, resolveRoot(meta.projectPath));
 
     const sideSlots = nameStoreSlotsFor(provider.name, filePath, meta.sessionId);
     const fp = stat.size > 0 ? fingerprint(filePath, stat.size) : null;
