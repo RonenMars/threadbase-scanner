@@ -966,6 +966,25 @@ export class ConversationScanner {
     }
   }
 
+  /**
+   * Snapshot of the in-memory search body per conversation id (non-persistent
+   * mode). Lets a host persist it, since a new scanner starts with none and a
+   * statCache hit would otherwise index an empty body.
+   */
+  exportSearchContents(): Map<string, string> {
+    return new Map(this.searchContents);
+  }
+
+  /**
+   * Preload search bodies (ids → body) before scan(), so statCache hits index
+   * a real body. Existing entries win: they come from a fresher parse.
+   */
+  seedSearchContents(contents: Iterable<readonly [string, string]>): void {
+    for (const [id, body] of contents) {
+      if (!this.searchContents.has(id)) this.searchContents.set(id, body);
+    }
+  }
+
   getMetadataCache(): Map<string, ConversationMeta> {
     if (this.persistent) {
       const map = new Map<string, ConversationMeta>();
