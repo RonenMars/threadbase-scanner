@@ -60,5 +60,8 @@ describe("search content export/seed (non-persistent statCache hit)", () => {
   it("seeding the exported bodies restores body search", async () => {
     const s = await secondScanner(true);
     expect((await s.search("zebrafish")).length).toBe(1);
+    const id = [...s.getMetadataCache().keys()][0];
+    expect(s.getSearchContent(id)).toContain("zebrafish");
+    expect(s.getSearchContent("missing")).toBeUndefined();
   });
 });
