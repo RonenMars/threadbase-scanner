@@ -27,6 +27,7 @@ Key modules and their responsibilities:
 - `indexer.ts` — FlexSearch document index across all metadata fields (legacy in-memory search)
 - `filters.ts` — immutable sort/filter/pagination (returns new arrays, never mutates)
 - `scanner.ts` — orchestrator/facade. Persistent (SQLite) by default; pass `persistent: false` for the legacy in-memory path
+- `git.ts` — `readGitBranch()` (walks up for `.git/HEAD`) and `readProjectRoot()` (exported; exact directory only, reads `.git`: a directory is a main checkout, a `gitdir: …/.git/worktrees/<name>` file is a linked worktree of that root, anything else is its own project; `null` when unreadable). The engines fill `projectRoot`/`worktreePath` on `ConversationMeta` right where `gitBranch` is filled, memoized per scan; providers set neither. Persisted as `project_root`/`worktree_path` (schema v13); a NULL `project_root` row reads back with both fields unset
 - `providers/` — `ScannerProvider` abstraction (discover/canParse/reduce/finalize). `ThreadbaseProvider` wraps the shared `metadata-reducer` (no duplication); `CodexCliProvider` parses local OpenAI Codex CLI rollout sessions; `CursorProvider` parses Cursor agent-transcripts JSONL (`~/.cursor/projects/<slug>/agent-transcripts/`) into the same `ConversationMeta` model
 
 ### Providers (`src/providers/`)

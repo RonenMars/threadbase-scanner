@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import { getLogger } from "./logger";
 
 const REF_PREFIX = "ref: refs/heads/";
@@ -39,4 +39,54 @@ export function readGitBranch(projectPath: string): string | null {
 
   log.trace({ projectPath }, "git: no .git found within depth");
   return null;
+}
+
+export interface ProjectRoot {
+  /** The main checkout: where `.git` is a directory. Equals the path itself when it is not a linked worktree. */
+  projectRoot: string;
+  /** The path itself when it is a linked worktree of `projectRoot`; null otherwise. */
+  worktreePath: string | null;
+}
+
+// A linked worktree's `.git` file reads `gitdir: <root>/.git/worktrees/<name>`.
+// A submodule's reads `gitdir: <root>/.git/modules/<name>` and is its own project.
+const WORKTREE_GITDIR = /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+$/;
+
+/**
+ * Which project a working directory belongs to, so a repo and its linked
+ * worktrees can be grouped. Reads one small file, no `git` subprocess, and
+ * looks at the exact directory only (no walk up, unlike readGitBranch).
+ *
+ * Returns null when nothing can be said (path gone, no `.git`), so a caller
+ * leaves its fields unset and retries on a later scan. A deleted worktree
+ * resolves to nothing; that is accepted.
+ */
+export function readProjectRoot(projectPath: string): ProjectRoot | null {
+  if (!projectPath) return null;
+  const path = resolve(projectPath);
+
+  let text: string;
+  try {
+    text = readFileSync(join(path, ".git"), "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EISDIR") return null;
+    return { projectRoot: path, worktreePath: null };
+  }
+
+  const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(text)?.[1];
+  const root = gitdir ? WORKTREE_GITDIR.exec(resolve(path, gitdir))?.[1] : undefined;
+  return root
+    ? { projectRoot: root, worktreePath: path }
+    : { projectRoot: path, worktreePath: null };
+}
+
+// Per-scan memo: a scan has thousands of conversations but few distinct
+// project paths. Never longer-lived: a worktree can be added or removed between
+// scans.
+export function memoByPath<T>(fn: (projectPath: string) => T): (projectPath: string) => T {
+  const memo = new Map<string, T>();
+  return (projectPath) => {
+    if (!memo.has(projectPath)) memo.set(projectPath, fn(projectPath));
+    return memo.get(projectPath) as T;
+  };
 }

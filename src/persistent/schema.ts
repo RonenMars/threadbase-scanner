@@ -30,7 +30,9 @@
 // resolved from the same five slots (see session-name.ts).
 // v12: reindex only — a prompt sent mid-turn (a queued_command attachment) is
 // now a user message, which moves the message indexes after it.
-export const SCHEMA_VERSION = 12;
+// v13: project_root + worktree_path on conversations + a reindex, so a repo and
+// its linked worktrees can be grouped (see readProjectRoot in git.ts).
+export const SCHEMA_VERSION = 13;
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS conversation_files (
@@ -85,6 +87,10 @@ CREATE TABLE IF NOT EXISTS conversations (
   project_name TEXT,
   account TEXT NOT NULL DEFAULT 'default',
   branch TEXT,
+  -- readProjectRoot(project_path): the main checkout, and the path itself when
+  -- it is a linked worktree. NULL project_root = not resolved.
+  project_root TEXT,
+  worktree_path TEXT,
 
   preview TEXT,
   content_snippet TEXT,
