@@ -5,6 +5,19 @@ import { getLogger } from "./logger";
 const REF_PREFIX = "ref: refs/heads/";
 const MAX_DEPTH = 6;
 
+// Where HEAD lives for the checkout at `dir`. In a linked worktree `.git` is a
+// file pointing at <root>/.git/worktrees/<name>, and that directory holds HEAD.
+function headFile(dir: string): string {
+  const dotGit = join(dir, ".git");
+  try {
+    const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf-8"))?.[1];
+    if (gitdir) return join(resolve(dir, gitdir), "HEAD");
+  } catch {
+    // .git is a directory (EISDIR) or absent: fall through to the plain layout
+  }
+  return join(dotGit, "HEAD");
+}
+
 export function readGitBranch(projectPath: string): string | null {
   if (!projectPath) return null;
   const log = getLogger();
@@ -13,7 +26,7 @@ export function readGitBranch(projectPath: string): string | null {
   let depth = 0;
 
   while (depth < MAX_DEPTH) {
-    const headPath = join(dir, ".git", "HEAD");
+    const headPath = headFile(dir);
     try {
       const content = readFileSync(headPath, "utf-8").trim();
       if (content.startsWith(REF_PREFIX)) {
