@@ -24,14 +24,21 @@ export function asQueuedPromptUserEntry(entry: Record<string, unknown>): Record<
 // <command-args>…</command-args>, and the args are where the user's real prompt
 // lives (`/plan <prompt>`). cleanSystemTags strips both tags, which emptied the
 // line and dropped the session's first prompt from history. Rebuild what was typed.
-const COMMAND_RE = /^\s*<command-name>([\s\S]*?)<\/command-name>/;
+// A skill command (`/inbox`, `/later`) leads with <command-message>, a built-in
+// (`/clear`, `/add-dir`) leads with <command-name> (Claude Code 2.1.332).
+const COMMAND_RE =
+  /^\s*(<command-message>[\s\S]*?<\/command-message>\s*)?<command-name>([\s\S]*?)<\/command-name>/;
 const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
 
 function cleanText(text: string): string {
-  const name = text.match(COMMAND_RE)?.[1]?.trim();
-  const args = name ? text.match(COMMAND_ARGS_RE)?.[1]?.trim() : undefined;
-  // A bare command (/compact, /clear) carries no prompt and stays hidden.
-  return name && args ? `${name} ${args}` : cleanSystemTags(text);
+  const m = text.match(COMMAND_RE);
+  const name = m?.[2]?.trim();
+  if (!m || !name) return cleanSystemTags(text);
+  const args = text.match(COMMAND_ARGS_RE)?.[1]?.trim();
+  if (args) return `${name} ${args}`;
+  // A bare built-in (/compact, /clear) carries no prompt and stays hidden; a bare
+  // skill command is the whole prompt the user typed.
+  return m[1] ? name : cleanSystemTags(text);
 }
 
 export function extractTextContent(content: unknown): string {
