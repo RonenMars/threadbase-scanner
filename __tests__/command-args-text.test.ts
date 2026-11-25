@@ -27,4 +27,23 @@ describe("extractTextContent: slash-command user lines", () => {
     expect(extractTextContent("<local-command-stdout>Set model</local-command-stdout>")).toBe("");
     expect(extractTextContent("<local-command-caveat>x</local-command-caveat>")).toBe("");
   });
+
+  // Claude Code 2.1.332 writes a skill command with <command-message> first.
+  const skill = (name: string, args?: string) =>
+    `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>` +
+    (args === undefined ? "" : `\n<command-args>${args}</command-args>`);
+
+  it("keeps a skill command that leads with <command-message>", () => {
+    expect(extractTextContent(skill("later", "at 21:15 run tests"))).toBe(
+      "/later at 21:15 run tests",
+    );
+  });
+
+  it("keeps a bare skill command as the typed prompt", () => {
+    expect(extractTextContent(skill("inbox"))).toBe("/inbox");
+  });
+
+  it("does not rebuild a command quoted in the middle of prose", () => {
+    expect(extractTextContent("see <command-name>/x</command-name> here")).toBe("see here");
+  });
 });
